@@ -1,0 +1,101 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Backgrounds */
+    --background: 216 28% 97%;
+    --foreground: 222 47% 10%;
+    --card: 0 0% 100%;
+    --muted: 213 20% 93%;
+    --muted-foreground: 215 16% 40%;
+    --border: 214 24% 88%;
+
+    /* Brand primary — saturated blue (readable, modern) */
+    --primary: 221 83% 48%;
+    --primary-foreground: 210 40% 98%;
+
+    /* Accent — soft blue tint */
+    --accent: 214 95% 93%;
+    --accent-foreground: 221 64% 28%;
+
+    /* Destructive */
+    --destructive: 0 72% 50%;
+    --destructive-foreground: 0 0% 100%;
+
+    /* Ring */
+    --ring: 221 83% 48%;
+
+    /* Sidebar — deep teal */
+    --sidebar: 193 75% 11%;
+    --sidebar-foreground: 168 40% 96%;
+
+    --radius: 0.625rem;
+
+    /* Status colours */
+    --status-active: 152 60% 42%;
+    --status-inactive: 0 65% 52%;
+    --status-warning: 38 92% 48%;
+    --status-info: 199 80% 42%;
+  }
+
+  .dark {
+    --background: 222 48% 5%;
+    --foreground: 210 40% 97%;
+    --card: 222 42% 8%;
+    --muted: 217 28% 14%;
+    --muted-foreground: 215 18% 64%;
+    --border: 217 24% 18%;
+
+    --primary: 217 91% 58%;
+    --primary-foreground: 222 47% 11%;
+
+    --accent: 217 28% 17%;
+    --accent-foreground: 214 95% 93%;
+
+    --destructive: 0 62% 44%;
+    --destructive-foreground: 0 0% 100%;
+
+    --ring: 217 91% 58%;
+
+    --sidebar: 193 60% 7%;
+    --sidebar-foreground: 168 30% 94%;
+
+    --status-active: 152 52% 48%;
+    --status-inactive: 0 58% 54%;
+    --status-warning: 38 82% 54%;
+    --status-info: 199 72% 50%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+  }
+
+  /* Smooth scrollbars */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { @apply bg-transparent; }
+  ::-webkit-scrollbar-thumb { @apply rounded-full bg-border; }
+  ::-webkit-scrollbar-thumb:hover { @apply bg-muted-foreground/40; }
+}
+
+@layer utilities {
+  .status-active   { color: hsl(var(--status-active)); }
+  .status-inactive { color: hsl(var(--status-inactive)); }
+  .status-warning  { color: hsl(var(--status-warning)); }
+  .status-info     { color: hsl(var(--status-info)); }
+
+  .bg-status-active   { background-color: hsl(var(--status-active) / 0.12); color: hsl(var(--status-active)); }
+  .bg-status-inactive { background-color: hsl(var(--status-inactive) / 0.12); color: hsl(var(--status-inactive)); }
+  .bg-status-warning  { background-color: hsl(var(--status-warning) / 0.12); color: hsl(var(--status-warning)); }
+  .bg-status-info     { background-color: hsl(var(--status-info) / 0.12); color: hsl(var(--status-info)); }
+
+  /* glass card helper */
+  .glass {
+    @apply border border-white/20 bg-white/70 shadow-sm backdrop-blur-sm dark:border-white/8 dark:bg-white/5;
+  }
+}
