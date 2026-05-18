@@ -3,6 +3,8 @@
 interface ImportMetaEnv {
   readonly VITE_ISSABEL_BASE_URL?: string;
   readonly VITE_BASE?: string;
+  /** API base path or URL (default /api on same Vercel project) */
+  readonly VITE_API_URL?: string;
   /** Set to "0" to hide PBX sidebar group */
   readonly VITE_FEATURE_PBX?: string;
   /** Set to "0" to hide Reports nav item */

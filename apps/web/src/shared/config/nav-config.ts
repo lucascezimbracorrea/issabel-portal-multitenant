@@ -17,7 +17,6 @@ import {
   UserRound,
   Users,
   Voicemail,
-  Webhook,
 } from 'lucide-react';
 import type { Role } from '@/shared/lib/can';
 

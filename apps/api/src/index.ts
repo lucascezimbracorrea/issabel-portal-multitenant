@@ -129,14 +129,23 @@ async function syncPortalExtensionToIssabel(
 
 const app = new Hono();
 
+function corsAllowedOrigins(): string[] {
+  const fromEnv = (process.env.CORS_ORIGINS ?? 'http://localhost:5173,http://localhost:4173')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const extras: string[] = [];
+  if (process.env.VERCEL_URL) extras.push(`https://${process.env.VERCEL_URL}`);
+  if (process.env.VERCEL_BRANCH_URL) extras.push(`https://${process.env.VERCEL_BRANCH_URL}`);
+  return [...fromEnv, ...extras];
+}
+
 app.use(
   '*',
   cors({
     origin: (origin) => {
       if (!origin) return null;
-      const allowed = (process.env.CORS_ORIGINS ?? 'http://localhost:5173,http://localhost:4173')
-        .split(',')
-        .map((s) => s.trim());
+      const allowed = corsAllowedOrigins();
       return allowed.includes(origin) ? origin : null;
     },
     allowHeaders: ['Content-Type', 'Authorization'],
@@ -3084,7 +3093,9 @@ app.get('/audio-files', async (c) => {
   return c.json({ items });
 });
 
-const AUDIO_DIR = process.env.AUDIO_FILES_DIR ?? './audio-uploads';
+const AUDIO_DIR =
+  process.env.AUDIO_FILES_DIR ??
+  (process.env.VERCEL ? '/tmp/audio-uploads' : './audio-uploads');
 const ALLOWED_AUDIO_TYPES = new Set(['audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/x-wav', 'audio/mp3', 'audio/x-gsm', 'audio/basic']);
 const MAX_AUDIO_SIZE = 20 * 1024 * 1024; // 20 MB
 
@@ -3219,6 +3230,10 @@ app.get('/metrics/queue-log', async (c) => {
 
 app.get('/health', (c) => c.json({ ok: true }));
 
-const port = Number(process.env.PORT ?? 8787);
-console.log(`API on http://localhost:${port}`);
-serve({ fetch: app.fetch, port });
+export { app };
+
+if (!process.env.VERCEL) {
+  const port = Number(process.env.PORT ?? 8787);
+  console.log(`API on http://localhost:${port}`);
+  serve({ fetch: app.fetch, port });
+}

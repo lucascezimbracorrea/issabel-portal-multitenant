@@ -1,4 +1,5 @@
-const base = '/api';
+/** Same-origin /api on Vercel; override with VITE_API_URL for split hosting. */
+const base = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') || '/api';
 
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${base}${path}`, {
