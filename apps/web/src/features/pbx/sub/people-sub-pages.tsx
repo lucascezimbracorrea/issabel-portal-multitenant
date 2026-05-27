@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { useRouteContext } from '@tanstack/react-router';
 import { toast } from 'sonner';
-import { Plus, Trash2, Pencil, X, Check, Users, UserRound, Layers, UsersRound, Search } from 'lucide-react';
+import { Link } from '@tanstack/react-router';
+import { Plus, Trash2, Pencil, X, Check, Users, UserRound, Layers, UsersRound, Search, Download } from 'lucide-react';
 import { apiFetch } from '@/shared/api/client';
 import { useActiveOrganizationId } from '@/shared/lib/org-context';
 import { Button } from '@/shared/ui/button';
@@ -21,6 +22,7 @@ export function PbxPeoplePage() {
   const { me } = useRouteContext({ from: '/_shell' });
   const orgId = useActiveOrganizationId(me);
   const [q, setQ] = useState('');
+  const importRef = useRef<HTMLInputElement>(null);
 
   const list = useQuery({
     queryKey: ['extensions', orgId ?? 0],
@@ -36,11 +38,69 @@ export function PbxPeoplePage() {
     return e.displayName.toLowerCase().includes(s) || e.number.includes(s);
   });
 
+  const importExt = useMutation({
+    mutationFn: (rows: { number: string; displayName: string }[]) =>
+      Promise.all(
+        rows.map((row) =>
+          apiFetch('/extensions', {
+            method: 'POST',
+            body: JSON.stringify({ organizationId: orgId, number: row.number, displayName: row.displayName }),
+          }),
+        ),
+      ),
+    onSuccess: async () => {
+      toast.success(t('extensions.created'));
+      await list.refetch();
+    },
+    onError: () => toast.error(t('extensions.failed')),
+  });
+
+  async function handleImport(file: File) {
+    const text = await file.text();
+    const lines = text.split(/\r?\n/).filter((l) => l.trim());
+    const rows = lines.slice(1).map((line) => {
+      const [number, name] = line.split(',').map((s) => s.trim().replace(/^"|"$/g, ''));
+      return { number, displayName: name || number };
+    }).filter((r) => r.number);
+    if (rows.length === 0) {
+      toast.error('CSV vazio ou invalido');
+      return;
+    }
+    importExt.mutate(rows);
+  }
+
+  function exportCsv() {
+    const header = 'numero,nome,origem\n';
+    const rows = filtered.map((e) => `${e.number},"${e.displayName.replace(/"/g, '""')}",${e.source ?? ''}`).join('\n');
+    const blob = new Blob([header + rows], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'pessoas.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">{t('pbx.peopleList')}</h1>
-        <p className="mt-1 text-sm text-muted-foreground">{t('pbx.peopleListBody')}</p>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">{t('pbx.peopleList')}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">{t('pbx.peopleListBody')}</p>
+        </div>
+        <div className="flex gap-2">
+          <input ref={importRef} type="file" accept=".csv,text/csv" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleImport(f); e.target.value = ''; }} />
+          <Button variant="outline" className="gap-2" onClick={() => importRef.current?.click()} disabled={importExt.isPending}>
+            Importar
+          </Button>
+          <Button variant="outline" className="gap-2" onClick={exportCsv} disabled={filtered.length === 0}>
+            <Download className="h-4 w-4" />
+            Exportar
+          </Button>
+          <Button asChild className="gap-2">
+            <Link to="/extensions/new"><Plus className="h-4 w-4" />Inserir ramal</Link>
+          </Button>
+        </div>
       </div>
 
       <div className="relative max-w-xs">
@@ -48,34 +108,33 @@ export function PbxPeoplePage() {
         <Input className="pl-9" placeholder={t('extensions.filter')} value={q} onChange={(e) => setQ(e.target.value)} />
       </div>
 
-      {list.isPending ? (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-20 rounded-xl" />)}
-        </div>
-      ) : filtered.length === 0 ? (
-        <Card className="border-0 shadow-md ring-1 ring-border/50">
-          <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
-            <Users className="h-10 w-10 text-muted-foreground/40" />
-            <p className="text-sm text-muted-foreground">{t('extensions.empty')}</p>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {filtered.map((ext) => (
-            <Card key={ext.id} className="border-0 shadow-md ring-1 ring-border/50 transition-shadow hover:shadow-lg">
-              <CardContent className="flex items-center gap-3 p-4">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-teal-100 dark:bg-teal-950/40">
-                  <UserRound className="h-5 w-5 text-teal-600 dark:text-teal-400" />
-                </div>
-                <div className="min-w-0">
-                  <p className="truncate font-medium text-sm">{ext.displayName}</p>
-                  <p className="font-mono text-xs text-muted-foreground">{ext.number}</p>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      )}
+      <Card className="border-0 shadow-md ring-1 ring-border/50">
+        <CardContent className="p-0">
+          {list.isPending ? <Skeleton className="m-6 h-32" /> : filtered.length === 0 ? (
+            <div className="flex flex-col items-center gap-3 py-10 text-center">
+              <Users className="h-10 w-10 text-muted-foreground/40" />
+              <p className="text-sm text-muted-foreground">{t('extensions.empty')}</p>
+            </div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead><tr className="border-b bg-muted/40 text-left text-xs uppercase text-muted-foreground">
+                <th className="p-3">{t('extensions.colNumber')}</th>
+                <th className="p-3">{t('extensions.colName')}</th>
+                <th className="p-3">{t('extensions.colSource')}</th>
+              </tr></thead>
+              <tbody>
+                {filtered.map((ext) => (
+                  <tr key={ext.id} className="border-b border-border/70">
+                    <td className="p-3 font-mono font-bold">{ext.number}</td>
+                    <td className="p-3">{ext.displayName}</td>
+                    <td className="p-3 text-xs text-muted-foreground">{ext.source}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

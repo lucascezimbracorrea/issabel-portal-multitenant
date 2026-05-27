@@ -10,7 +10,7 @@ import { Input } from '@/shared/ui/input';
 type OrgCreatePayload = {
   name: string;
   tradeName?: string;
-  orgKind: 'pabx' | 'dialer';
+  orgKind: 'pabx' | 'dialer' | 'hospitality';
   issabelBaseUrl?: string;
   extensionsLimit?: number | null;
   channelsLimit?: number | null;
@@ -90,10 +90,11 @@ export function OrgCreateModal({ onClose, onCreated }: Props) {
               <select
                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                 value={form.orgKind}
-                onChange={(e) => field('orgKind', e.target.value as 'pabx' | 'dialer')}
+                onChange={(e) => field('orgKind', e.target.value as 'pabx' | 'dialer' | 'hospitality')}
               >
                 <option value="pabx">PABX</option>
                 <option value="dialer">Dialer</option>
+                <option value="hospitality">Hotelaria</option>
               </select>
             </div>
             <div className="col-span-2 space-y-1">

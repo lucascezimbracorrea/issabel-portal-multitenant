@@ -25,7 +25,7 @@ export const organizations = mysqlTable('organizations', {
   domainVerificationToken: varchar('domain_verification_token', { length: 128 }),
   issabelBaseUrl: varchar('issabel_base_url', { length: 512 }),
   orgKind: varchar('org_kind', { length: 16 })
-    .$type<'pabx' | 'dialer'>()
+    .$type<'pabx' | 'dialer' | 'hospitality'>()
     .notNull()
     .default('pabx'),
   extensionsLimit: int('extensions_limit'),
@@ -195,6 +195,26 @@ export const campaigns = mysqlTable('campaigns', {
     .notNull()
     .default('draft'),
   description: text('description'),
+  externalDiscadorId: varchar('external_discador_id', { length: 64 }),
+  createdAt: varchar('created_at', { length: 64 }).$defaultFn(nowFn),
+});
+
+export const issabelApplyJobs = mysqlTable('issabel_apply_jobs', {
+  id: int('id').autoincrement().primaryKey(),
+  organizationId: int('organization_id')
+    .notNull()
+    .references(() => organizations.id, { onDelete: 'cascade' }),
+  resourceType: varchar('resource_type', { length: 32 })
+    .$type<'call_flow' | 'ura'>()
+    .notNull(),
+  resourceId: int('resource_id').notNull(),
+  bundleJson: text('bundle_json').notNull(),
+  status: varchar('status', { length: 32 })
+    .$type<'pending' | 'applied' | 'failed' | 'awaiting_manual'>()
+    .notNull()
+    .default('pending'),
+  lastError: text('last_error'),
+  processedAt: varchar('processed_at', { length: 64 }),
   createdAt: varchar('created_at', { length: 64 }).$defaultFn(nowFn),
 });
 
@@ -273,8 +293,10 @@ export const callFlows = mysqlTable('call_flows', {
     .notNull()
     .references(() => organizations.id, { onDelete: 'cascade' }),
   name: varchar('name', { length: 255 }).notNull(),
+  extensionNumber: varchar('extension_number', { length: 32 }),
   graphJson: text('graph_json').notNull(),
   version: int('version').notNull().default(1),
+  active: boolean('active').notNull().default(true),
   updatedAt: varchar('updated_at', { length: 64 }).$defaultFn(nowFn),
 });
 
@@ -326,11 +348,22 @@ export const queues = mysqlTable('queues', {
     .notNull()
     .references(() => organizations.id, { onDelete: 'cascade' }),
   name: varchar('name', { length: 255 }).notNull(),
+  queueCode: varchar('queue_code', { length: 16 }),
   strategy: varchar('strategy', { length: 32 }).notNull().default('roundrobin'),
   timeout: int('timeout').notNull().default(30),
   maxCalls: int('max_calls'),
   musicOnHold: varchar('music_on_hold', { length: 128 }),
   description: text('description'),
+  createdAt: varchar('created_at', { length: 64 }).$defaultFn(nowFn),
+});
+
+export const queueMembers = mysqlTable('queue_members', {
+  id: int('id').autoincrement().primaryKey(),
+  queueId: int('queue_id')
+    .notNull()
+    .references(() => queues.id, { onDelete: 'cascade' }),
+  extensionId: int('extension_id'),
+  agentLabel: varchar('agent_label', { length: 128 }).notNull(),
   createdAt: varchar('created_at', { length: 64 }).$defaultFn(nowFn),
 });
 
@@ -344,6 +377,7 @@ export const conferenceRooms = mysqlTable('conference_rooms', {
   pin: varchar('pin', { length: 20 }),
   maxParticipants: int('max_participants'),
   description: text('description'),
+  settingsJson: text('settings_json').notNull().default('{}'),
   createdAt: varchar('created_at', { length: 64 }).$defaultFn(nowFn),
 });
 
@@ -355,6 +389,7 @@ export const holdGroups = mysqlTable('hold_groups', {
   name: varchar('name', { length: 255 }).notNull(),
   description: text('description'),
   mode: varchar('mode', { length: 16 }).notNull().default('files'),
+  audioFileId: int('audio_file_id'),
   createdAt: varchar('created_at', { length: 64 }).$defaultFn(nowFn),
 });
 
@@ -367,8 +402,31 @@ export const trunks = mysqlTable('trunks', {
   type: varchar('type', { length: 16 }).notNull().default('sip'),
   host: varchar('host', { length: 256 }),
   username: varchar('username', { length: 128 }),
+  password: varchar('password', { length: 256 }),
   status: varchar('status', { length: 16 }).notNull().default('active'),
+  cutDigits: varchar('cut_digits', { length: 16 }),
+  insertDigits: varchar('insert_digits', { length: 16 }),
+  dynamicHost: boolean('dynamic_host').notNull().default(false),
+  useDefaultCodecs: boolean('use_default_codecs').notNull().default(true),
+  codecs: text('codecs').notNull().default('[]'),
+  forwardRaw: boolean('forward_raw').notNull().default(false),
+  registerStatus: varchar('register_status', { length: 32 }),
+  tariffsJson: text('tariffs_json').notNull().default('[]'),
   description: text('description'),
+  createdAt: varchar('created_at', { length: 64 }).$defaultFn(nowFn),
+});
+
+export const internalNumbers = mysqlTable('internal_numbers', {
+  id: int('id').autoincrement().primaryKey(),
+  organizationId: int('organization_id')
+    .notNull()
+    .references(() => organizations.id, { onDelete: 'cascade' }),
+  shortNumber: varchar('short_number', { length: 32 }).notNull(),
+  destType: varchar('dest_type', { length: 32 })
+    .$type<'ura' | 'queue' | 'call_flow' | 'extension'>()
+    .notNull(),
+  destinationId: int('destination_id').notNull(),
+  name: varchar('name', { length: 255 }).notNull(),
   createdAt: varchar('created_at', { length: 64 }).$defaultFn(nowFn),
 });
 
@@ -420,5 +478,151 @@ export const audioFiles = mysqlTable('audio_files', {
   name: varchar('name', { length: 255 }).notNull(),
   filename: varchar('filename', { length: 256 }),
   description: text('description'),
+  createdAt: varchar('created_at', { length: 64 }).$defaultFn(nowFn),
+});
+
+export const inboundNumbers = mysqlTable('inbound_numbers', {
+  id: int('id').autoincrement().primaryKey(),
+  organizationId: int('organization_id')
+    .notNull()
+    .references(() => organizations.id, { onDelete: 'cascade' }),
+  number: varchar('number', { length: 32 }).notNull(),
+  routeType: varchar('route_type', { length: 16 })
+    .$type<'none' | 'ura' | 'queue' | 'extension' | 'call_flow'>()
+    .notNull()
+    .default('none'),
+  destinationId: int('destination_id'),
+  maxConcurrentCalls: int('max_concurrent_calls').notNull().default(0),
+  registerEnabled: boolean('register_enabled').notNull().default(false),
+  recordCalls: boolean('record_calls').notNull().default(false),
+  scheduleJson: text('schedule_json').notNull().default('{}'),
+  active: boolean('active').notNull().default(true),
+  description: text('description'),
+  createdAt: varchar('created_at', { length: 64 }).$defaultFn(nowFn),
+});
+
+export const hotelProperties = mysqlTable('hotel_properties', {
+  id: int('id').autoincrement().primaryKey(),
+  organizationId: int('organization_id')
+    .notNull()
+    .references(() => organizations.id, { onDelete: 'cascade' }),
+  name: varchar('name', { length: 255 }).notNull(),
+  externalHotelId: varchar('external_hotel_id', { length: 128 }).notNull(),
+  ipbxUrl: varchar('ipbx_url', { length: 512 }).notNull(),
+  ramalCloudApiBase: varchar('ramal_cloud_api_base', { length: 512 }),
+  tokenSecret: varchar('token_secret', { length: 128 }).notNull().default('i360-pswd'),
+  createdAt: varchar('created_at', { length: 64 }).$defaultFn(nowFn),
+});
+
+export const hotelRooms = mysqlTable('hotel_rooms', {
+  id: int('id').autoincrement().primaryKey(),
+  propertyId: int('property_id')
+    .notNull()
+    .references(() => hotelProperties.id, { onDelete: 'cascade' }),
+  roomNumber: varchar('room_number', { length: 32 }).notNull(),
+  extensionNumber: varchar('extension_number', { length: 32 }).notNull(),
+  extensionId: int('extension_id').references(() => extensions.id, { onDelete: 'set null' }),
+  status: varchar('status', { length: 16 })
+    .$type<'vacant' | 'occupied' | 'maintenance'>()
+    .notNull()
+    .default('vacant'),
+  floor: varchar('floor', { length: 16 }),
+  notes: text('notes'),
+  createdAt: varchar('created_at', { length: 64 }).$defaultFn(nowFn),
+});
+
+export const hotelStays = mysqlTable('hotel_stays', {
+  id: int('id').autoincrement().primaryKey(),
+  roomId: int('room_id')
+    .notNull()
+    .references(() => hotelRooms.id, { onDelete: 'cascade' }),
+  guestName: varchar('guest_name', { length: 255 }).notNull(),
+  status: varchar('status', { length: 16 })
+    .$type<'pending' | 'active' | 'checked_out' | 'failed'>()
+    .notNull()
+    .default('pending'),
+  jobId: int('job_id'),
+  ramalPassEnc: text('ramal_pass_enc'),
+  ramalDomain: varchar('ramal_domain', { length: 255 }),
+  plannedCheckOut: varchar('planned_check_out', { length: 64 }),
+  checkedInAt: varchar('checked_in_at', { length: 64 }),
+  checkedOutAt: varchar('checked_out_at', { length: 64 }),
+  createdAt: varchar('created_at', { length: 64 }).$defaultFn(nowFn),
+});
+
+export const hotelInteractionLogs = mysqlTable('hotel_interaction_logs', {
+  id: int('id').autoincrement().primaryKey(),
+  organizationId: int('organization_id')
+    .notNull()
+    .references(() => organizations.id, { onDelete: 'cascade' }),
+  roomId: int('room_id').references(() => hotelRooms.id, { onDelete: 'set null' }),
+  stayId: int('stay_id').references(() => hotelStays.id, { onDelete: 'set null' }),
+  type: varchar('type', { length: 32 }).notNull(),
+  metadataJson: text('metadata_json').notNull().default('{}'),
+  createdAt: varchar('created_at', { length: 64 }).$defaultFn(nowFn),
+});
+
+export const crmLeads = mysqlTable('crm_leads', {
+  id: int('id').autoincrement().primaryKey(),
+  organizationId: int('organization_id')
+    .notNull()
+    .references(() => organizations.id, { onDelete: 'cascade' }),
+  externalId: varchar('external_id', { length: 64 }).notNull(),
+  name: varchar('name', { length: 255 }).notNull(),
+  email: varchar('email', { length: 255 }),
+  phone: varchar('phone', { length: 64 }),
+  phoneNormalized: varchar('phone_normalized', { length: 32 }),
+  status: varchar('status', { length: 64 }),
+  source: varchar('source', { length: 128 }),
+  rawJson: text('raw_json'),
+  syncedAt: varchar('synced_at', { length: 64 }).notNull(),
+});
+
+export const crmClients = mysqlTable('crm_clients', {
+  id: int('id').autoincrement().primaryKey(),
+  organizationId: int('organization_id')
+    .notNull()
+    .references(() => organizations.id, { onDelete: 'cascade' }),
+  externalId: varchar('external_id', { length: 64 }).notNull(),
+  leadExternalId: varchar('lead_external_id', { length: 64 }),
+  name: varchar('name', { length: 255 }).notNull(),
+  email: varchar('email', { length: 255 }),
+  phone: varchar('phone', { length: 64 }),
+  phoneNormalized: varchar('phone_normalized', { length: 32 }),
+  rawJson: text('raw_json'),
+  syncedAt: varchar('synced_at', { length: 64 }).notNull(),
+});
+
+export const uras = mysqlTable('uras', {
+  id: int('id').autoincrement().primaryKey(),
+  organizationId: int('organization_id')
+    .notNull()
+    .references(() => organizations.id, { onDelete: 'cascade' }),
+  name: varchar('name', { length: 255 }).notNull(),
+  extensionNumber: varchar('extension_number', { length: 32 }).notNull(),
+  initialAudioId: int('initial_audio_id').references(() => audioFiles.id, { onDelete: 'set null' }),
+  repetitions: int('repetitions').notNull().default(2),
+  allowDirectDial: boolean('allow_direct_dial').notNull().default(false),
+  scheduleEnabled: boolean('schedule_enabled').notNull().default(false),
+  scheduleJson: text('schedule_json').notNull().default('{}'),
+  dtmfActionsJson: text('dtmf_actions_json').notNull().default('[]'),
+  graphJson: text('graph_json').notNull().default('{"nodes":[],"edges":[]}'),
+  uraMode: varchar('ura_mode', { length: 16 })
+    .$type<'classic' | 'ai'>()
+    .notNull()
+    .default('classic'),
+  aiInstructions: text('ai_instructions'),
+  elevenlabsAgentId: varchar('elevenlabs_agent_id', { length: 128 }),
+  portalAiAgentId: int('portal_ai_agent_id').references(() => aiAgents.id, { onDelete: 'set null' }),
+  useAiInstructions: boolean('use_ai_instructions').notNull().default(false),
+  useJson: boolean('use_json').notNull().default(false),
+  jsonContent: text('json_content'),
+  initialMessage: text('initial_message'),
+  useInitialMessage: boolean('use_initial_message').notNull().default(false),
+  googleDocsUrl: varchar('google_docs_url', { length: 512 }),
+  useGoogleDocs: boolean('use_google_docs').notNull().default(false),
+  version: int('version').notNull().default(1),
+  active: boolean('active').notNull().default(true),
+  updatedAt: varchar('updated_at', { length: 64 }).$defaultFn(nowFn),
   createdAt: varchar('created_at', { length: 64 }).$defaultFn(nowFn),
 });

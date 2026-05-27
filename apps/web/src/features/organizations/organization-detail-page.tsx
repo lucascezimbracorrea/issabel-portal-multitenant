@@ -22,7 +22,7 @@ type OrgDetail = {
   name: string;
   tradeName: string | null;
   active: boolean;
-  orgKind: 'pabx' | 'dialer';
+  orgKind: 'pabx' | 'dialer' | 'hospitality';
   issabelBaseUrl: string | null;
   customDomain: string | null;
   domainVerificationToken: string | null;
@@ -266,11 +266,12 @@ function QuotasTab({ org, isAdmin, onUpdated }: { org: OrgDetail; isAdmin: boole
             <select
               className="flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
               value={orgKind}
-              onChange={(e) => setOrgKind(e.target.value as 'pabx' | 'dialer')}
+              onChange={(e) => setOrgKind(e.target.value as 'pabx' | 'dialer' | 'hospitality')}
               disabled={!isAdmin}
             >
               <option value="pabx">PABX</option>
               <option value="dialer">Dialer</option>
+              <option value="hospitality">Hotelaria</option>
             </select>
           </div>
         </div>

@@ -10,6 +10,7 @@ import { Button } from '@/shared/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/card';
 import { Input } from '@/shared/ui/input';
 import { Skeleton } from '@/shared/ui/skeleton';
+import { CrmScreenPop } from '@/shared/components/crm-screen-pop';
 
 function defaultRange() {
   const to = new Date();
@@ -114,7 +115,10 @@ export function CallsHistoryPage() {
                   {(q.data?.items ?? []).map((r) => (
                     <tr key={r.uniqueid} className="border-b border-border/70">
                       <td className="p-2 font-mono text-xs">{r.calldate}</td>
-                      <td className="p-2 font-mono text-xs">{r.src}</td>
+                      <td className="p-2 font-mono text-xs">
+                        {r.src}
+                        {oid != null && <CrmScreenPop orgId={oid} phone={r.src} />}
+                      </td>
                       <td className="p-2 font-mono text-xs">{r.dst}</td>
                       <td className="p-2 tabular-nums">{r.billsec}s</td>
                       <td className="p-2 capitalize">{r.disposition}</td>

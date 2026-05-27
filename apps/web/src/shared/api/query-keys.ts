@@ -20,5 +20,9 @@ export const qk = {
   integrations: (orgId: number) => ['integrations', orgId] as const,
   callFlows: (orgId: number) => ['callFlows', orgId] as const,
   callRules: (orgId: number) => ['callRules', orgId] as const,
+  inboundNumbers: (orgId: number) => ['inboundNumbers', orgId] as const,
+  inboundNumber: (id: number) => ['inboundNumber', id] as const,
+  uras: (orgId: number) => ['uras', orgId] as const,
+  ura: (id: number) => ['ura', id] as const,
   orgMembers: (orgId: number) => ['orgMembers', orgId] as const,
 };

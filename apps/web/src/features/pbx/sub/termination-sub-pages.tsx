@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { useRouteContext } from '@tanstack/react-router';
 import { toast } from 'sonner';
+import { Link } from '@tanstack/react-router';
 import { Map, Server, Plus, Trash2, Pencil, Check, X } from 'lucide-react';
 import { apiFetch } from '@/shared/api/client';
 import { useActiveOrganizationId } from '@/shared/lib/org-context';
@@ -75,8 +76,10 @@ export function TrunksPage() {
           <h1 className="text-2xl font-bold tracking-tight">{t('pbx.trunks')}</h1>
           <p className="mt-1 text-sm text-muted-foreground">{t('pbx.trunksBody')}</p>
         </div>
-        {canWrite && !showCreate && (
-          <Button onClick={() => setShowCreate(true)} className="w-fit gap-2"><Plus className="h-4 w-4" />{t('trunk.new')}</Button>
+        {canWrite && (
+          <Button asChild className="w-fit gap-2">
+            <Link to="/pbx/termination/trunks/new"><Plus className="h-4 w-4" />{t('trunk.new')}</Link>
+          </Button>
         )}
       </div>
 
@@ -178,7 +181,7 @@ export function TrunksPage() {
                           </div>
                         ) : (
                           <div className="flex justify-end gap-1">
-                            <Button size="sm" variant="outline" className="h-7 px-2" onClick={() => { setEditingId(tr.id); setEditName(tr.name); setEditHost(tr.host ?? ''); setEditStatus(tr.status as 'active' | 'inactive'); }}><Pencil className="h-3 w-3" /></Button>
+                            <Button size="sm" variant="outline" className="h-7 px-2" asChild><Link to="/pbx/termination/trunks/$trunkId" params={{ trunkId: String(tr.id) }}><Pencil className="h-3 w-3" /></Link></Button>
                             <Button size="sm" variant="ghost" className="h-7 px-2 text-destructive hover:text-destructive" onClick={() => { if (window.confirm(t('trunk.confirmDelete'))) remove.mutate(tr.id); }}><Trash2 className="h-3 w-3" /></Button>
                           </div>
                         )}

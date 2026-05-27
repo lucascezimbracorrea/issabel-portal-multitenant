@@ -20,5 +20,29 @@ export async function verifyToken(token: string) {
   const sub = payload.sub ? Number(payload.sub) : NaN;
   const role = typeof payload.role === 'string' ? payload.role : '';
   if (!Number.isFinite(sub)) throw new Error('invalid');
-  return { sub, role };
+  return { sub, role, purpose: typeof payload.purpose === 'string' ? payload.purpose : null, orgId: typeof payload.orgId === 'number' ? payload.orgId : Number(payload.orgId) || null, extensionId: typeof payload.extensionId === 'number' ? payload.extensionId : Number(payload.extensionId) || null };
+}
+
+/** Short-lived token for softphone app (15 min). */
+export async function signSoftphoneToken(payload: {
+  sub: number;
+  orgId: number;
+  extensionId?: number;
+}) {
+  return new jose.SignJWT({
+    purpose: 'softphone',
+    orgId: payload.orgId,
+    ...(payload.extensionId ? { extensionId: payload.extensionId } : {}),
+  })
+    .setProtectedHeader({ alg: 'HS256' })
+    .setSubject(String(payload.sub))
+    .setIssuedAt()
+    .setExpirationTime('15m')
+    .sign(secret);
+}
+
+export async function verifySoftphoneToken(token: string) {
+  const v = await verifyToken(token);
+  if (v.purpose !== 'softphone' || !v.orgId) throw new Error('invalid_softphone_token');
+  return { sub: v.sub, orgId: v.orgId, extensionId: v.extensionId };
 }

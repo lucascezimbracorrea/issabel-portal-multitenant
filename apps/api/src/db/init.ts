@@ -344,6 +344,46 @@ CREATE TABLE IF NOT EXISTS audio_files (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
 
     await conn.query(`
+CREATE TABLE IF NOT EXISTS inbound_numbers (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  organization_id INT NOT NULL,
+  number VARCHAR(32) NOT NULL,
+  route_type VARCHAR(16) NOT NULL DEFAULT 'none',
+  destination_id INT,
+  max_concurrent_calls INT NOT NULL DEFAULT 0,
+  register_enabled TINYINT(1) NOT NULL DEFAULT 0,
+  record_calls TINYINT(1) NOT NULL DEFAULT 0,
+  schedule_json TEXT NOT NULL,
+  active TINYINT(1) NOT NULL DEFAULT 1,
+  description TEXT,
+  created_at VARCHAR(64) DEFAULT NULL,
+  FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+  UNIQUE KEY inbound_numbers_org_number (organization_id, number)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+
+    await conn.query(`
+CREATE TABLE IF NOT EXISTS uras (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  organization_id INT NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  extension_number VARCHAR(32) NOT NULL,
+  initial_audio_id INT,
+  repetitions INT NOT NULL DEFAULT 2,
+  allow_direct_dial TINYINT(1) NOT NULL DEFAULT 0,
+  schedule_enabled TINYINT(1) NOT NULL DEFAULT 0,
+  schedule_json TEXT NOT NULL,
+  dtmf_actions_json TEXT NOT NULL,
+  graph_json TEXT NOT NULL,
+  version INT NOT NULL DEFAULT 1,
+  active TINYINT(1) NOT NULL DEFAULT 1,
+  updated_at VARCHAR(64) DEFAULT NULL,
+  created_at VARCHAR(64) DEFAULT NULL,
+  FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+  FOREIGN KEY (initial_audio_id) REFERENCES audio_files(id) ON DELETE SET NULL,
+  UNIQUE KEY uras_org_ext (organization_id, extension_number)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+
+    await conn.query(`
 CREATE TABLE IF NOT EXISTS security_auto_config (
   id INT PRIMARY KEY,
   enabled TINYINT(1) NOT NULL DEFAULT 1,
@@ -409,6 +449,193 @@ CREATE TABLE IF NOT EXISTS security_block_log (
       const msg = e instanceof Error ? e.message : String(e);
       if (!msg.includes('Duplicate column name')) throw e;
     }
+
+    await conn.query(`
+CREATE TABLE IF NOT EXISTS queue_members (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  queue_id INT NOT NULL,
+  extension_id INT,
+  agent_label VARCHAR(128) NOT NULL,
+  created_at VARCHAR(64) DEFAULT NULL,
+  FOREIGN KEY (queue_id) REFERENCES queues(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+
+    await conn.query(`
+CREATE TABLE IF NOT EXISTS internal_numbers (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  organization_id INT NOT NULL,
+  short_number VARCHAR(32) NOT NULL,
+  dest_type VARCHAR(32) NOT NULL,
+  destination_id INT NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  created_at VARCHAR(64) DEFAULT NULL,
+  FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+
+    const columnAlters = [
+      'ALTER TABLE call_flows ADD COLUMN extension_number VARCHAR(32) NULL',
+      'ALTER TABLE call_flows ADD COLUMN active TINYINT(1) NOT NULL DEFAULT 1',
+      'ALTER TABLE queues ADD COLUMN queue_code VARCHAR(16) NULL',
+      'ALTER TABLE conference_rooms ADD COLUMN settings_json TEXT NOT NULL DEFAULT \'{}\'',
+      'ALTER TABLE hold_groups ADD COLUMN audio_file_id INT NULL',
+      'ALTER TABLE trunks ADD COLUMN password VARCHAR(256) NULL',
+      'ALTER TABLE trunks ADD COLUMN cut_digits VARCHAR(16) NULL',
+      'ALTER TABLE trunks ADD COLUMN insert_digits VARCHAR(16) NULL',
+      'ALTER TABLE trunks ADD COLUMN dynamic_host TINYINT(1) NOT NULL DEFAULT 0',
+      'ALTER TABLE trunks ADD COLUMN use_default_codecs TINYINT(1) NOT NULL DEFAULT 1',
+      'ALTER TABLE trunks ADD COLUMN codecs TEXT NOT NULL DEFAULT \'[]\'',
+      'ALTER TABLE trunks ADD COLUMN forward_raw TINYINT(1) NOT NULL DEFAULT 0',
+      'ALTER TABLE trunks ADD COLUMN register_status VARCHAR(32) NULL',
+      'ALTER TABLE trunks ADD COLUMN tariffs_json TEXT NOT NULL DEFAULT \'[]\'',
+    ];
+    for (const sql of columnAlters) {
+      try {
+        await conn.query(sql);
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (!msg.includes('Duplicate column name')) throw e;
+      }
+    }
+
+    await conn.query(`
+CREATE TABLE IF NOT EXISTS hotel_properties (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  organization_id INT NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  external_hotel_id VARCHAR(128) NOT NULL,
+  ipbx_url VARCHAR(512) NOT NULL,
+  ramal_cloud_api_base VARCHAR(512),
+  token_secret VARCHAR(128) NOT NULL DEFAULT 'i360-pswd',
+  created_at VARCHAR(64) DEFAULT NULL,
+  FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+
+    await conn.query(`
+CREATE TABLE IF NOT EXISTS hotel_rooms (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  property_id INT NOT NULL,
+  room_number VARCHAR(32) NOT NULL,
+  extension_number VARCHAR(32) NOT NULL,
+  extension_id INT,
+  status VARCHAR(16) NOT NULL DEFAULT 'vacant',
+  floor VARCHAR(16),
+  notes TEXT,
+  created_at VARCHAR(64) DEFAULT NULL,
+  FOREIGN KEY (property_id) REFERENCES hotel_properties(id) ON DELETE CASCADE,
+  FOREIGN KEY (extension_id) REFERENCES extensions(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+
+    await conn.query(`
+CREATE TABLE IF NOT EXISTS hotel_stays (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  room_id INT NOT NULL,
+  guest_name VARCHAR(255) NOT NULL,
+  status VARCHAR(16) NOT NULL DEFAULT 'pending',
+  job_id INT,
+  ramal_pass_enc TEXT,
+  ramal_domain VARCHAR(255),
+  checked_in_at VARCHAR(64),
+  checked_out_at VARCHAR(64),
+  created_at VARCHAR(64) DEFAULT NULL,
+  FOREIGN KEY (room_id) REFERENCES hotel_rooms(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+
+    await conn.query(`
+CREATE TABLE IF NOT EXISTS crm_leads (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  organization_id INT NOT NULL,
+  external_id VARCHAR(64) NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  email VARCHAR(255),
+  phone VARCHAR(64),
+  phone_normalized VARCHAR(32),
+  status VARCHAR(64),
+  source VARCHAR(128),
+  raw_json TEXT,
+  synced_at VARCHAR(64) NOT NULL,
+  FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+  UNIQUE KEY uq_crm_lead_org_ext (organization_id, external_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+
+    await conn.query(`
+CREATE TABLE IF NOT EXISTS hotel_interaction_logs (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  organization_id INT NOT NULL,
+  room_id INT,
+  stay_id INT,
+  type VARCHAR(32) NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  created_at VARCHAR(64) DEFAULT NULL,
+  FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+  FOREIGN KEY (room_id) REFERENCES hotel_rooms(id) ON DELETE SET NULL,
+  FOREIGN KEY (stay_id) REFERENCES hotel_stays(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+
+    try {
+      await conn.query('ALTER TABLE hotel_stays ADD COLUMN planned_check_out VARCHAR(64) NULL');
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!msg.includes('Duplicate column name')) throw e;
+    }
+
+    try {
+      await conn.query('ALTER TABLE campaigns ADD COLUMN external_discador_id VARCHAR(64) NULL');
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!msg.includes('Duplicate column name')) throw e;
+    }
+
+    const uraAiCols = [
+      "ALTER TABLE uras ADD COLUMN ura_mode VARCHAR(16) NOT NULL DEFAULT 'classic'",
+      'ALTER TABLE uras ADD COLUMN ai_instructions TEXT NULL',
+      'ALTER TABLE uras ADD COLUMN elevenlabs_agent_id VARCHAR(128) NULL',
+      'ALTER TABLE uras ADD COLUMN portal_ai_agent_id INT NULL',
+      'ALTER TABLE uras ADD COLUMN use_ai_instructions TINYINT(1) NOT NULL DEFAULT 0',
+      'ALTER TABLE uras ADD COLUMN use_json TINYINT(1) NOT NULL DEFAULT 0',
+      'ALTER TABLE uras ADD COLUMN json_content TEXT NULL',
+      'ALTER TABLE uras ADD COLUMN initial_message TEXT NULL',
+      'ALTER TABLE uras ADD COLUMN use_initial_message TINYINT(1) NOT NULL DEFAULT 0',
+      'ALTER TABLE uras ADD COLUMN google_docs_url VARCHAR(512) NULL',
+      'ALTER TABLE uras ADD COLUMN use_google_docs TINYINT(1) NOT NULL DEFAULT 0',
+    ];
+    for (const sql of uraAiCols) {
+      try {
+        await conn.query(sql);
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (!msg.includes('Duplicate column name')) throw e;
+      }
+    }
+
+    await conn.query(`
+CREATE TABLE IF NOT EXISTS issabel_apply_jobs (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  organization_id INT NOT NULL,
+  resource_type VARCHAR(32) NOT NULL,
+  resource_id INT NOT NULL,
+  bundle_json TEXT NOT NULL,
+  status VARCHAR(32) NOT NULL DEFAULT 'pending',
+  last_error TEXT,
+  processed_at VARCHAR(64),
+  created_at VARCHAR(64) DEFAULT NULL,
+  FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+
+    await conn.query(`
+CREATE TABLE IF NOT EXISTS crm_clients (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  organization_id INT NOT NULL,
+  external_id VARCHAR(64) NOT NULL,
+  lead_external_id VARCHAR(64),
+  name VARCHAR(255) NOT NULL,
+  email VARCHAR(255),
+  phone VARCHAR(64),
+  phone_normalized VARCHAR(32),
+  raw_json TEXT,
+  synced_at VARCHAR(64) NOT NULL,
+  FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+  UNIQUE KEY uq_crm_client_org_ext (organization_id, external_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
   } finally {
     conn.release();
   }

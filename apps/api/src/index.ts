@@ -24,6 +24,24 @@ import {
   redactIssabelPbxApiJson,
   syncExtensionViaIssabelPbxApi,
 } from './lib/issabel-pbx-api.js';
+import { resolveDestinationLabel, resolveDestinationLabelForDtmf } from './lib/destination-resolver.js';
+import {
+  businessScheduleZ,
+  defaultDtmfActions,
+  dtmfActionRowZ,
+  parseDtmfJson,
+  parseGraphJson,
+  parseScheduleJson,
+  routeTypeZ,
+} from './lib/routing-types.js';
+import { registerPbxAuditRoutes } from './routes/pbx-audit.js';
+import { registerHospitalityRoutes } from './routes/hospitality.js';
+import { registerIntegrationsExtRoutes } from './routes/integrations-ext.js';
+import { registerIssabelPhase2Routes } from './routes/issabel-phase2.js';
+import { registerTelephonyExtRoutes } from './routes/telephony-ext.js';
+import { signSoftphoneToken } from './lib/jwt.js';
+import { buildUraAiBundle } from './lib/issabel-ia-agents.js';
+import { enqueueApplyJob } from './lib/issabel-apply-worker.js';
 
 await initSchema();
 
@@ -243,6 +261,63 @@ app.post('/auth/logout', (c) => {
   return c.json({ ok: true });
 });
 
+const softphoneLoginSchema = z.object({
+  email: z.string().min(1),
+  password: z.string().min(1),
+  organizationId: z.number().optional(),
+  extensionId: z.number().optional(),
+});
+
+app.post('/auth/softphone-login', async (c) => {
+  const parsed = softphoneLoginSchema.safeParse(await c.req.json());
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+  const { email, password, organizationId, extensionId } = parsed.data;
+  const [user] = await db.select().from(schema.users).where(eq(schema.users.email, email));
+  if (!user || !bcrypt.compareSync(password, user.passwordHash)) {
+    return c.json({ error: 'invalid_credentials' }, 401);
+  }
+  const memberships = await db
+    .select()
+    .from(schema.organizationMembers)
+    .where(eq(schema.organizationMembers.userId, user.id));
+  const orgIds =
+    user.role === 'platform_admin'
+      ? (await db.select({ id: schema.organizations.id }).from(schema.organizations)).map((r) => r.id)
+      : memberships.map((m) => m.organizationId);
+  if (orgIds.length === 0) return c.json({ error: 'no_organizations' }, 403);
+  const orgId = organizationId && orgIds.includes(organizationId) ? organizationId : orgIds[0];
+  const token = await signSoftphoneToken({ sub: user.id, orgId, extensionId });
+  const extensions = await db
+    .select({ id: schema.extensions.id, number: schema.extensions.number, displayName: schema.extensions.displayName })
+    .from(schema.extensions)
+    .where(eq(schema.extensions.organizationId, orgId))
+    .limit(100);
+  return c.json({
+    token,
+    expiresIn: 900,
+    user: { id: user.id, email: user.email, displayName: user.displayName },
+    organizationId: orgId,
+    organizationIds: orgIds,
+    extensions,
+  });
+});
+
+app.post('/auth/softphone-exchange', async (c) => {
+  const u = await getSessionUser(c);
+  if (!u) return c.json({ error: 'unauthorized' }, 401);
+  const body = z
+    .object({ organizationId: z.number(), extensionId: z.number().optional() })
+    .safeParse(await c.req.json());
+  if (!body.success) return c.json({ error: 'invalid_body' }, 400);
+  if (!(await canReadOrg(u, body.data.organizationId))) return c.json({ error: 'forbidden' }, 403);
+  const token = await signSoftphoneToken({
+    sub: u.id,
+    orgId: body.data.organizationId,
+    extensionId: body.data.extensionId,
+  });
+  return c.json({ token, expiresIn: 900 });
+});
+
 app.get('/public/branding-by-host', async (c) => {
   const host = c.req.query('host')?.toLowerCase() ?? '';
   if (!host) return c.json({ organizationId: null, appearance: {} });
@@ -330,7 +405,7 @@ const listQuery = z.object({
 });
 
 const orgListQuery = listQuery.extend({
-  orgKind: z.enum(['pabx', 'dialer']).optional(),
+  orgKind: z.enum(['pabx', 'dialer', 'hospitality']).optional(),
   status: z.enum(['active', 'inactive', 'all']).optional(),
 });
 
@@ -459,7 +534,7 @@ app.get('/organizations/:id', async (c) => {
 });
 
 const orgQuotasPatch = z.object({
-  orgKind: z.enum(['pabx', 'dialer']).optional(),
+  orgKind: z.enum(['pabx', 'dialer', 'hospitality']).optional(),
   extensionsLimit: z.coerce.number().int().positive().nullable().optional(),
   channelsLimit: z.coerce.number().int().nonnegative().nullable().optional(),
   diskQuotaGb: z.coerce.number().nonnegative().nullable().optional(),
@@ -1872,14 +1947,27 @@ app.get('/call-flows', async (c) => {
   if (!(await canReadOrg(u, orgId))) return c.json({ error: 'forbidden' }, 403);
   const rows = await db.select().from(schema.callFlows).where(eq(schema.callFlows.organizationId, orgId));
   return c.json({
-    items: rows.map((r) => ({ ...r, graph: JSON.parse(r.graphJson || '{}') })),
+    items: rows.map((r) => ({
+      ...r,
+      graph: JSON.parse(r.graphJson || '{}'),
+      nodeCount: (() => {
+        try {
+          const g = JSON.parse(r.graphJson || '{}') as { nodes?: unknown[] };
+          return g.nodes?.length ?? 0;
+        } catch {
+          return 0;
+        }
+      })(),
+    })),
   });
 });
 
 const flowCreate = z.object({
   organizationId: z.number(),
   name: z.string().min(1).max(128),
+  extensionNumber: z.string().max(32).optional().nullable(),
   graph: z.unknown().optional(),
+  active: z.boolean().optional(),
 });
 
 app.post('/call-flows', async (c) => {
@@ -1895,8 +1983,10 @@ app.post('/call-flows', async (c) => {
     .values({
       organizationId: b.organizationId,
       name: b.name,
+      extensionNumber: b.extensionNumber ?? null,
       graphJson: JSON.stringify(graph),
       version: 1,
+      active: b.active ?? true,
     }) as unknown as [{ insertId: number }];
   const [row] = await db.select().from(schema.callFlows).where(eq(schema.callFlows.id, res.insertId));
   return c.json({ ...row, graph: JSON.parse(row.graphJson || '{}') });
@@ -1904,7 +1994,10 @@ app.post('/call-flows', async (c) => {
 
 const flowPatch = z.object({
   name: z.string().min(1).max(128).optional(),
+  extensionNumber: z.string().max(32).nullable().optional(),
   graph: z.unknown().optional(),
+  graphJson: z.string().optional(),
+  active: z.boolean().optional(),
 });
 
 app.patch('/call-flows/:id', async (c) => {
@@ -1917,11 +2010,18 @@ app.patch('/call-flows/:id', async (c) => {
   if (!row) return c.json({ error: 'not_found' }, 404);
   if (!(await canWriteOrg(u, row.organizationId))) return c.json({ error: 'forbidden' }, 403);
   const b = parsed.data;
-  const nextGraph = b.graph !== undefined ? JSON.stringify(b.graph as object) : undefined;
+  const nextGraph =
+    b.graph !== undefined
+      ? JSON.stringify(b.graph as object)
+      : b.graphJson !== undefined
+        ? b.graphJson
+        : undefined;
   await db
     .update(schema.callFlows)
     .set({
       ...(b.name !== undefined ? { name: b.name } : {}),
+      ...(b.extensionNumber !== undefined ? { extensionNumber: b.extensionNumber } : {}),
+      ...(b.active !== undefined ? { active: b.active } : {}),
       ...(nextGraph !== undefined ? { graphJson: nextGraph, version: row.version + 1 } : {}),
       updatedAt: new Date().toISOString(),
     })
@@ -2055,7 +2155,7 @@ app.delete('/call-reaction-rules/:id', async (c) => {
 const orgCreate = z.object({
   name: z.string().min(1).max(128),
   tradeName: z.string().max(128).nullable().optional(),
-  orgKind: z.enum(['pabx', 'dialer']).optional(),
+  orgKind: z.enum(['pabx', 'dialer', 'hospitality']).optional(),
   issabelBaseUrl: z.string().nullable().optional(),
   extensionsLimit: z.coerce.number().int().positive().nullable().optional(),
   channelsLimit: z.coerce.number().int().nonnegative().nullable().optional(),
@@ -2272,6 +2372,7 @@ const campaignCreate = z.object({
   type: z.enum(['outbound', 'preview', 'predictive']).optional(),
   status: z.enum(['active', 'paused', 'completed', 'draft']).optional(),
   description: z.string().max(512).optional(),
+  externalDiscadorId: z.string().max(64).nullable().optional(),
 });
 
 app.post('/campaigns', async (c) => {
@@ -2285,6 +2386,7 @@ app.post('/campaigns', async (c) => {
     organizationId: b.organizationId, name: b.name,
     type: b.type ?? 'outbound', status: b.status ?? 'draft',
     description: b.description ?? null,
+    externalDiscadorId: b.externalDiscadorId ?? null,
   }) as unknown as [{ insertId: number }];
   const [row] = await db.select().from(schema.campaigns).where(eq(schema.campaigns.id, res.insertId));
   return c.json(row, 201);
@@ -2295,6 +2397,7 @@ const campaignPatch = z.object({
   type: z.enum(['outbound', 'preview', 'predictive']).optional(),
   status: z.enum(['active', 'paused', 'completed', 'draft']).optional(),
   description: z.string().max(512).nullable().optional(),
+  externalDiscadorId: z.string().max(64).nullable().optional(),
 });
 
 app.patch('/campaigns/:id', async (c) => {
@@ -2312,6 +2415,7 @@ app.patch('/campaigns/:id', async (c) => {
     ...(b.type !== undefined ? { type: b.type } : {}),
     ...(b.status !== undefined ? { status: b.status } : {}),
     ...(b.description !== undefined ? { description: b.description } : {}),
+    ...(b.externalDiscadorId !== undefined ? { externalDiscadorId: b.externalDiscadorId } : {}),
   }).where(eq(schema.campaigns.id, id));
   const [next] = await db.select().from(schema.campaigns).where(eq(schema.campaigns.id, id));
   return c.json(next);
@@ -2531,6 +2635,7 @@ app.get('/queues', async (c) => {
 const queueCreate = z.object({
   organizationId: z.number(),
   name: z.string().min(1).max(128),
+  queueCode: z.string().max(16).optional().nullable(),
   strategy: z.enum(['roundrobin', 'leastrecent', 'fewestcalls', 'random', 'rrmemory']).optional(),
   timeout: z.number().int().min(5).max(300).optional(),
   maxCalls: z.number().int().optional(),
@@ -2548,6 +2653,7 @@ app.post('/queues', async (c) => {
   const [res] = await db.insert(schema.queues).values({
     organizationId: b.organizationId,
     name: b.name,
+    queueCode: b.queueCode ?? null,
     strategy: b.strategy ?? 'roundrobin',
     timeout: b.timeout ?? 30,
     maxCalls: b.maxCalls ?? null,
@@ -2560,6 +2666,7 @@ app.post('/queues', async (c) => {
 
 const queuePatch = z.object({
   name: z.string().min(1).max(128).optional(),
+  queueCode: z.string().max(16).nullable().optional(),
   strategy: z.enum(['roundrobin', 'leastrecent', 'fewestcalls', 'random', 'rrmemory']).optional(),
   timeout: z.number().int().optional(),
   maxCalls: z.number().int().nullable().optional(),
@@ -2579,6 +2686,7 @@ app.patch('/queues/:id', async (c) => {
   const b = parsed.data;
   await db.update(schema.queues).set({
     ...(b.name !== undefined ? { name: b.name } : {}),
+    ...(b.queueCode !== undefined ? { queueCode: b.queueCode } : {}),
     ...(b.strategy !== undefined ? { strategy: b.strategy } : {}),
     ...(b.timeout !== undefined ? { timeout: b.timeout } : {}),
     ...(b.maxCalls !== undefined ? { maxCalls: b.maxCalls } : {}),
@@ -2608,7 +2716,8 @@ app.get('/conference-rooms', async (c) => {
   const orgId = Number(c.req.query('organizationId'));
   if (!orgId) return c.json({ error: 'organizationId required' }, 400);
   if (!(await canReadOrg(u, orgId))) return c.json({ error: 'forbidden' }, 403);
-  const items = await db.select().from(schema.conferenceRooms).where(eq(schema.conferenceRooms.organizationId, orgId)).orderBy(desc(schema.conferenceRooms.id));
+  const rows = await db.select().from(schema.conferenceRooms).where(eq(schema.conferenceRooms.organizationId, orgId)).orderBy(desc(schema.conferenceRooms.id));
+  const items = rows.map((r) => ({ ...r, settings: JSON.parse(r.settingsJson || '{}') }));
   return c.json({ items });
 });
 
@@ -2619,6 +2728,7 @@ const conferenceRoomCreate = z.object({
   pin: z.string().max(20).optional(),
   maxParticipants: z.number().int().optional(),
   description: z.string().max(512).optional(),
+  settings: z.record(z.unknown()).optional(),
 });
 
 app.post('/conference-rooms', async (c) => {
@@ -2635,9 +2745,10 @@ app.post('/conference-rooms', async (c) => {
     pin: b.pin ?? null,
     maxParticipants: b.maxParticipants ?? null,
     description: b.description ?? null,
+    settingsJson: JSON.stringify(b.settings ?? {}),
   }) as unknown as [{ insertId: number }];
   const [row] = await db.select().from(schema.conferenceRooms).where(eq(schema.conferenceRooms.id, res.insertId));
-  return c.json(row, 201);
+  return c.json({ ...row, settings: JSON.parse(row.settingsJson || '{}') }, 201);
 });
 
 const conferenceRoomPatch = z.object({
@@ -2646,6 +2757,7 @@ const conferenceRoomPatch = z.object({
   pin: z.string().max(20).nullable().optional(),
   maxParticipants: z.number().int().nullable().optional(),
   description: z.string().max(512).nullable().optional(),
+  settings: z.record(z.unknown()).optional(),
 });
 
 app.patch('/conference-rooms/:id', async (c) => {
@@ -2664,9 +2776,10 @@ app.patch('/conference-rooms/:id', async (c) => {
     ...(b.pin !== undefined ? { pin: b.pin } : {}),
     ...(b.maxParticipants !== undefined ? { maxParticipants: b.maxParticipants } : {}),
     ...(b.description !== undefined ? { description: b.description } : {}),
+    ...(b.settings !== undefined ? { settingsJson: JSON.stringify(b.settings) } : {}),
   }).where(eq(schema.conferenceRooms.id, id));
   const [next] = await db.select().from(schema.conferenceRooms).where(eq(schema.conferenceRooms.id, id));
-  return c.json(next);
+  return c.json({ ...next, settings: JSON.parse(next.settingsJson || '{}') });
 });
 
 app.delete('/conference-rooms/:id', async (c) => {
@@ -2697,6 +2810,7 @@ const holdGroupCreate = z.object({
   name: z.string().min(1).max(128),
   description: z.string().max(512).optional(),
   mode: z.enum(['files', 'playlist', 'random', 'none']).optional(),
+  audioFileId: z.number().nullable().optional(),
 });
 
 app.post('/hold-groups', async (c) => {
@@ -2711,6 +2825,7 @@ app.post('/hold-groups', async (c) => {
     name: b.name,
     description: b.description ?? null,
     mode: b.mode ?? 'files',
+    audioFileId: b.audioFileId ?? null,
   }) as unknown as [{ insertId: number }];
   const [row] = await db.select().from(schema.holdGroups).where(eq(schema.holdGroups.id, res.insertId));
   return c.json(row, 201);
@@ -2720,6 +2835,7 @@ const holdGroupPatch = z.object({
   name: z.string().min(1).max(128).optional(),
   description: z.string().max(512).nullable().optional(),
   mode: z.enum(['files', 'playlist', 'random', 'none']).optional(),
+  audioFileId: z.number().nullable().optional(),
 });
 
 app.patch('/hold-groups/:id', async (c) => {
@@ -2736,6 +2852,7 @@ app.patch('/hold-groups/:id', async (c) => {
     ...(b.name !== undefined ? { name: b.name } : {}),
     ...(b.description !== undefined ? { description: b.description } : {}),
     ...(b.mode !== undefined ? { mode: b.mode } : {}),
+    ...(b.audioFileId !== undefined ? { audioFileId: b.audioFileId } : {}),
   }).where(eq(schema.holdGroups.id, id));
   const [next] = await db.select().from(schema.holdGroups).where(eq(schema.holdGroups.id, id));
   return c.json(next);
@@ -2764,13 +2881,29 @@ app.get('/trunks', async (c) => {
   return c.json({ items });
 });
 
+const trunkTariffZ = z.object({
+  region: z.string().min(1).max(64),
+  fixed: z.number().optional(),
+  mobile: z.number().optional(),
+  international: z.number().optional(),
+});
+
 const trunkCreate = z.object({
   organizationId: z.number(),
   name: z.string().min(1).max(128),
   type: z.enum(['sip', 'iax2', 'dahdi']).optional(),
   host: z.string().max(256).optional(),
   username: z.string().max(128).optional(),
+  password: z.string().max(256).optional().nullable(),
   status: z.enum(['active', 'inactive']).optional(),
+  cutDigits: z.string().max(16).optional().nullable(),
+  insertDigits: z.string().max(16).optional().nullable(),
+  dynamicHost: z.boolean().optional(),
+  useDefaultCodecs: z.boolean().optional(),
+  codecs: z.array(z.string()).optional(),
+  forwardRaw: z.boolean().optional(),
+  registerStatus: z.string().max(32).optional().nullable(),
+  tariffs: z.array(trunkTariffZ).optional(),
   description: z.string().max(512).optional(),
 });
 
@@ -2787,11 +2920,20 @@ app.post('/trunks', async (c) => {
     type: b.type ?? 'sip',
     host: b.host ?? null,
     username: b.username ?? null,
+    password: b.password ?? null,
     status: b.status ?? 'active',
+    cutDigits: b.cutDigits ?? null,
+    insertDigits: b.insertDigits ?? null,
+    dynamicHost: b.dynamicHost ?? false,
+    useDefaultCodecs: b.useDefaultCodecs ?? true,
+    codecs: JSON.stringify(b.codecs ?? []),
+    forwardRaw: b.forwardRaw ?? false,
+    registerStatus: b.registerStatus ?? null,
+    tariffsJson: JSON.stringify(b.tariffs ?? []),
     description: b.description ?? null,
   }) as unknown as [{ insertId: number }];
   const [row] = await db.select().from(schema.trunks).where(eq(schema.trunks.id, res.insertId));
-  return c.json(row, 201);
+  return c.json({ ...row, tariffs: JSON.parse(row.tariffsJson || '[]'), codecs: JSON.parse(row.codecs || '[]') }, 201);
 });
 
 const trunkPatch = z.object({
@@ -2799,7 +2941,16 @@ const trunkPatch = z.object({
   type: z.enum(['sip', 'iax2', 'dahdi']).optional(),
   host: z.string().max(256).nullable().optional(),
   username: z.string().max(128).nullable().optional(),
+  password: z.string().max(256).nullable().optional(),
   status: z.enum(['active', 'inactive']).optional(),
+  cutDigits: z.string().max(16).nullable().optional(),
+  insertDigits: z.string().max(16).nullable().optional(),
+  dynamicHost: z.boolean().optional(),
+  useDefaultCodecs: z.boolean().optional(),
+  codecs: z.array(z.string()).optional(),
+  forwardRaw: z.boolean().optional(),
+  registerStatus: z.string().max(32).nullable().optional(),
+  tariffs: z.array(trunkTariffZ).optional(),
   description: z.string().max(512).nullable().optional(),
 });
 
@@ -2818,11 +2969,20 @@ app.patch('/trunks/:id', async (c) => {
     ...(b.type !== undefined ? { type: b.type } : {}),
     ...(b.host !== undefined ? { host: b.host } : {}),
     ...(b.username !== undefined ? { username: b.username } : {}),
+    ...(b.password !== undefined ? { password: b.password } : {}),
     ...(b.status !== undefined ? { status: b.status } : {}),
+    ...(b.cutDigits !== undefined ? { cutDigits: b.cutDigits } : {}),
+    ...(b.insertDigits !== undefined ? { insertDigits: b.insertDigits } : {}),
+    ...(b.dynamicHost !== undefined ? { dynamicHost: b.dynamicHost } : {}),
+    ...(b.useDefaultCodecs !== undefined ? { useDefaultCodecs: b.useDefaultCodecs } : {}),
+    ...(b.codecs !== undefined ? { codecs: JSON.stringify(b.codecs) } : {}),
+    ...(b.forwardRaw !== undefined ? { forwardRaw: b.forwardRaw } : {}),
+    ...(b.registerStatus !== undefined ? { registerStatus: b.registerStatus } : {}),
+    ...(b.tariffs !== undefined ? { tariffsJson: JSON.stringify(b.tariffs) } : {}),
     ...(b.description !== undefined ? { description: b.description } : {}),
   }).where(eq(schema.trunks.id, id));
   const [next] = await db.select().from(schema.trunks).where(eq(schema.trunks.id, id));
-  return c.json(next);
+  return c.json({ ...next, tariffs: JSON.parse(next.tariffsJson || '[]'), codecs: JSON.parse(next.codecs || '[]') });
 });
 
 app.delete('/trunks/:id', async (c) => {
@@ -2833,6 +2993,366 @@ app.delete('/trunks/:id', async (c) => {
   if (!row) return c.json({ error: 'not_found' }, 404);
   if (!(await canWriteOrg(u, row.organizationId))) return c.json({ error: 'forbidden' }, 403);
   await db.delete(schema.trunks).where(eq(schema.trunks.id, id));
+  return c.json({ ok: true });
+});
+
+// ─── Inbound Numbers (DIDs) ───────────────────────────────────────────────────
+
+async function serializeInbound(row: typeof schema.inboundNumbers.$inferSelect) {
+  const schedule = parseScheduleJson(row.scheduleJson);
+  const destinationLabel = await resolveDestinationLabel(row.organizationId, row.routeType, row.destinationId);
+  return {
+    ...row,
+    schedule,
+    destinationLabel,
+  };
+}
+
+app.get('/inbound-numbers', async (c) => {
+  const u = await getSessionUser(c);
+  if (!u) return c.json({ error: 'unauthorized' }, 401);
+  const orgId = Number(c.req.query('organizationId'));
+  if (!orgId) return c.json({ error: 'organizationId required' }, 400);
+  if (!(await canReadOrg(u, orgId))) return c.json({ error: 'forbidden' }, 403);
+  const rows = await db
+    .select()
+    .from(schema.inboundNumbers)
+    .where(eq(schema.inboundNumbers.organizationId, orgId))
+    .orderBy(desc(schema.inboundNumbers.id));
+  const items = await Promise.all(rows.map((r) => serializeInbound(r)));
+  return c.json({ items });
+});
+
+app.get('/inbound-numbers/:id', async (c) => {
+  const u = await getSessionUser(c);
+  if (!u) return c.json({ error: 'unauthorized' }, 401);
+  const id = Number(c.req.param('id'));
+  const [row] = await db.select().from(schema.inboundNumbers).where(eq(schema.inboundNumbers.id, id));
+  if (!row) return c.json({ error: 'not_found' }, 404);
+  if (!(await canReadOrg(u, row.organizationId))) return c.json({ error: 'forbidden' }, 403);
+  return c.json(await serializeInbound(row));
+});
+
+const inboundCreate = z.object({
+  organizationId: z.number(),
+  number: z.string().min(1).max(32),
+  routeType: routeTypeZ.optional(),
+  destinationId: z.number().int().nullable().optional(),
+  maxConcurrentCalls: z.number().int().min(0).optional(),
+  registerEnabled: z.boolean().optional(),
+  recordCalls: z.boolean().optional(),
+  schedule: businessScheduleZ.optional(),
+  active: z.boolean().optional(),
+  description: z.string().max(512).optional(),
+});
+
+app.post('/inbound-numbers', async (c) => {
+  const u = await getSessionUser(c);
+  if (!u) return c.json({ error: 'unauthorized' }, 401);
+  const parsed = inboundCreate.safeParse(await c.req.json());
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+  const b = parsed.data;
+  if (!(await canWriteOrg(u, b.organizationId))) return c.json({ error: 'forbidden' }, 403);
+  const [res] = await db.insert(schema.inboundNumbers).values({
+    organizationId: b.organizationId,
+    number: b.number.trim(),
+    routeType: b.routeType ?? 'none',
+    destinationId: b.destinationId ?? null,
+    maxConcurrentCalls: b.maxConcurrentCalls ?? 0,
+    registerEnabled: b.registerEnabled ?? false,
+    recordCalls: b.recordCalls ?? false,
+    scheduleJson: JSON.stringify(b.schedule ?? {}),
+    active: b.active ?? true,
+    description: b.description ?? null,
+  }) as unknown as [{ insertId: number }];
+  const [row] = await db.select().from(schema.inboundNumbers).where(eq(schema.inboundNumbers.id, res.insertId));
+  return c.json(await serializeInbound(row!), 201);
+});
+
+const inboundPatch = z.object({
+  number: z.string().min(1).max(32).optional(),
+  routeType: routeTypeZ.optional(),
+  destinationId: z.number().int().nullable().optional(),
+  maxConcurrentCalls: z.number().int().min(0).optional(),
+  registerEnabled: z.boolean().optional(),
+  recordCalls: z.boolean().optional(),
+  schedule: businessScheduleZ.optional(),
+  active: z.boolean().optional(),
+  description: z.string().max(512).nullable().optional(),
+});
+
+app.patch('/inbound-numbers/:id', async (c) => {
+  const u = await getSessionUser(c);
+  if (!u) return c.json({ error: 'unauthorized' }, 401);
+  const id = Number(c.req.param('id'));
+  const parsed = inboundPatch.safeParse(await c.req.json());
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+  const [row] = await db.select().from(schema.inboundNumbers).where(eq(schema.inboundNumbers.id, id));
+  if (!row) return c.json({ error: 'not_found' }, 404);
+  if (!(await canWriteOrg(u, row.organizationId))) return c.json({ error: 'forbidden' }, 403);
+  const b = parsed.data;
+  await db
+    .update(schema.inboundNumbers)
+    .set({
+      ...(b.number !== undefined ? { number: b.number.trim() } : {}),
+      ...(b.routeType !== undefined ? { routeType: b.routeType } : {}),
+      ...(b.destinationId !== undefined ? { destinationId: b.destinationId } : {}),
+      ...(b.maxConcurrentCalls !== undefined ? { maxConcurrentCalls: b.maxConcurrentCalls } : {}),
+      ...(b.registerEnabled !== undefined ? { registerEnabled: b.registerEnabled } : {}),
+      ...(b.recordCalls !== undefined ? { recordCalls: b.recordCalls } : {}),
+      ...(b.schedule !== undefined ? { scheduleJson: JSON.stringify(b.schedule) } : {}),
+      ...(b.active !== undefined ? { active: b.active } : {}),
+      ...(b.description !== undefined ? { description: b.description } : {}),
+    })
+    .where(eq(schema.inboundNumbers.id, id));
+  const [next] = await db.select().from(schema.inboundNumbers).where(eq(schema.inboundNumbers.id, id));
+  return c.json(await serializeInbound(next!));
+});
+
+app.delete('/inbound-numbers/:id', async (c) => {
+  const u = await getSessionUser(c);
+  if (!u) return c.json({ error: 'unauthorized' }, 401);
+  const id = Number(c.req.param('id'));
+  const [row] = await db.select().from(schema.inboundNumbers).where(eq(schema.inboundNumbers.id, id));
+  if (!row) return c.json({ error: 'not_found' }, 404);
+  if (!(await canWriteOrg(u, row.organizationId))) return c.json({ error: 'forbidden' }, 403);
+  await db.delete(schema.inboundNumbers).where(eq(schema.inboundNumbers.id, id));
+  return c.json({ ok: true });
+});
+
+// ─── URAs (IVR) ───────────────────────────────────────────────────────────────
+
+async function resolveUraAiFields(
+  b: {
+    aiInstructions?: string;
+    portalAiAgentId?: number | null;
+    uraMode?: 'classic' | 'ai';
+    useAiInstructions?: boolean;
+  },
+  orgId: number,
+) {
+  let aiInstructions = b.aiInstructions ?? '';
+  const uraMode = b.uraMode ?? (b.useAiInstructions ? 'ai' : 'classic');
+  if (b.portalAiAgentId) {
+    const [agent] = await db
+      .select()
+      .from(schema.aiAgents)
+      .where(
+        and(eq(schema.aiAgents.id, b.portalAiAgentId), eq(schema.aiAgents.organizationId, orgId)),
+      );
+    if (agent && (!aiInstructions.trim() || uraMode === 'ai')) {
+      aiInstructions = agent.prompt;
+    }
+  }
+  return { aiInstructions, uraMode };
+}
+
+async function serializeUra(row: typeof schema.uras.$inferSelect) {
+  const schedule = parseScheduleJson(row.scheduleJson);
+  const dtmfActions = parseDtmfJson(row.dtmfActionsJson);
+  const graph = parseGraphJson(row.graphJson);
+  const dtmfWithLabels = await Promise.all(
+    dtmfActions.map(async (a) => ({
+      ...a,
+      destinationLabel: await resolveDestinationLabelForDtmf(row.organizationId, a.action, a.destinationId ?? null),
+    })),
+  );
+  return {
+    ...row,
+    schedule,
+    dtmfActions: dtmfWithLabels,
+    graph,
+  };
+}
+
+app.get('/uras', async (c) => {
+  const u = await getSessionUser(c);
+  if (!u) return c.json({ error: 'unauthorized' }, 401);
+  const orgId = Number(c.req.query('organizationId'));
+  if (!orgId) return c.json({ error: 'organizationId required' }, 400);
+  if (!(await canReadOrg(u, orgId))) return c.json({ error: 'forbidden' }, 403);
+  const rows = await db.select().from(schema.uras).where(eq(schema.uras.organizationId, orgId)).orderBy(desc(schema.uras.id));
+  const items = await Promise.all(rows.map((r) => serializeUra(r)));
+  return c.json({ items });
+});
+
+app.get('/uras/:id', async (c) => {
+  const u = await getSessionUser(c);
+  if (!u) return c.json({ error: 'unauthorized' }, 401);
+  const id = Number(c.req.param('id'));
+  const [row] = await db.select().from(schema.uras).where(eq(schema.uras.id, id));
+  if (!row) return c.json({ error: 'not_found' }, 404);
+  if (!(await canReadOrg(u, row.organizationId))) return c.json({ error: 'forbidden' }, 403);
+  return c.json(await serializeUra(row));
+});
+
+const uraAiFieldsZ = {
+  uraMode: z.enum(['classic', 'ai']).optional(),
+  aiInstructions: z.string().max(16000).optional(),
+  elevenlabsAgentId: z.string().max(128).nullable().optional(),
+  portalAiAgentId: z.number().int().nullable().optional(),
+  useAiInstructions: z.boolean().optional(),
+  useJson: z.boolean().optional(),
+  jsonContent: z.string().max(65535).nullable().optional(),
+  initialMessage: z.string().max(4000).nullable().optional(),
+  useInitialMessage: z.boolean().optional(),
+  googleDocsUrl: z.string().max(512).nullable().optional(),
+  useGoogleDocs: z.boolean().optional(),
+  applyToIssabel: z.boolean().optional(),
+};
+
+const uraCreate = z.object({
+  organizationId: z.number(),
+  name: z.string().min(1).max(128),
+  extensionNumber: z.string().min(1).max(32),
+  initialAudioId: z.number().int().nullable().optional(),
+  repetitions: z.number().int().min(0).max(10).optional(),
+  allowDirectDial: z.boolean().optional(),
+  scheduleEnabled: z.boolean().optional(),
+  schedule: businessScheduleZ.optional(),
+  dtmfActions: z.array(dtmfActionRowZ).optional(),
+  graph: z.unknown().optional(),
+  active: z.boolean().optional(),
+  ...uraAiFieldsZ,
+});
+
+app.post('/uras', async (c) => {
+  const u = await getSessionUser(c);
+  if (!u) return c.json({ error: 'unauthorized' }, 401);
+  const parsed = uraCreate.safeParse(await c.req.json());
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+  const b = parsed.data;
+  if (!(await canWriteOrg(u, b.organizationId))) return c.json({ error: 'forbidden' }, 403);
+  const graph = (b.graph ?? { nodes: [], edges: [] }) as object;
+  const aiResolved = await resolveUraAiFields(b, b.organizationId);
+  const [res] = await db.insert(schema.uras).values({
+    organizationId: b.organizationId,
+    name: b.name.trim(),
+    extensionNumber: b.extensionNumber.trim(),
+    initialAudioId: b.initialAudioId ?? null,
+    repetitions: b.repetitions ?? 2,
+    allowDirectDial: b.allowDirectDial ?? false,
+    scheduleEnabled: b.scheduleEnabled ?? false,
+    scheduleJson: JSON.stringify(b.schedule ?? {}),
+    dtmfActionsJson: JSON.stringify(b.dtmfActions ?? defaultDtmfActions()),
+    graphJson: JSON.stringify(graph),
+    uraMode: aiResolved.uraMode,
+    aiInstructions: aiResolved.aiInstructions || null,
+    elevenlabsAgentId: b.elevenlabsAgentId ?? null,
+    portalAiAgentId: b.portalAiAgentId ?? null,
+    useAiInstructions: b.useAiInstructions ?? aiResolved.uraMode === 'ai',
+    useJson: b.useJson ?? false,
+    jsonContent: b.jsonContent ?? null,
+    initialMessage: b.initialMessage ?? null,
+    useInitialMessage: b.useInitialMessage ?? false,
+    googleDocsUrl: b.googleDocsUrl ?? null,
+    useGoogleDocs: b.useGoogleDocs ?? false,
+    version: 1,
+    active: b.active ?? true,
+  }) as unknown as [{ insertId: number }];
+  const [row] = await db.select().from(schema.uras).where(eq(schema.uras.id, res.insertId));
+  if (b.applyToIssabel && row) {
+    const jobId = await enqueueApplyJob(db, {
+      organizationId: row.organizationId,
+      resourceType: 'ura',
+      resourceId: row.id,
+      bundle: buildUraAiBundle(row),
+    });
+    return c.json({ ...(await serializeUra(row)), applyJobId: jobId }, 201);
+  }
+  return c.json(await serializeUra(row!), 201);
+});
+
+const uraPatch = z.object({
+  name: z.string().min(1).max(128).optional(),
+  extensionNumber: z.string().min(1).max(32).optional(),
+  initialAudioId: z.number().int().nullable().optional(),
+  repetitions: z.number().int().min(0).max(10).optional(),
+  allowDirectDial: z.boolean().optional(),
+  scheduleEnabled: z.boolean().optional(),
+  schedule: businessScheduleZ.optional(),
+  dtmfActions: z.array(dtmfActionRowZ).optional(),
+  graph: z.unknown().optional(),
+  active: z.boolean().optional(),
+  ...uraAiFieldsZ,
+});
+
+app.patch('/uras/:id', async (c) => {
+  const u = await getSessionUser(c);
+  if (!u) return c.json({ error: 'unauthorized' }, 401);
+  const id = Number(c.req.param('id'));
+  const parsed = uraPatch.safeParse(await c.req.json());
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+  const [row] = await db.select().from(schema.uras).where(eq(schema.uras.id, id));
+  if (!row) return c.json({ error: 'not_found' }, 404);
+  if (!(await canWriteOrg(u, row.organizationId))) return c.json({ error: 'forbidden' }, 403);
+  const b = parsed.data;
+  const nextGraph = b.graph !== undefined ? JSON.stringify(b.graph as object) : undefined;
+  const aiResolved =
+    b.aiInstructions !== undefined || b.portalAiAgentId !== undefined || b.uraMode !== undefined
+      ? await resolveUraAiFields(
+          {
+            aiInstructions: b.aiInstructions ?? row.aiInstructions ?? undefined,
+            portalAiAgentId: b.portalAiAgentId ?? row.portalAiAgentId,
+            uraMode: b.uraMode ?? row.uraMode,
+            useAiInstructions: b.useAiInstructions,
+          },
+          row.organizationId,
+        )
+      : null;
+  await db
+    .update(schema.uras)
+    .set({
+      ...(b.name !== undefined ? { name: b.name.trim() } : {}),
+      ...(b.extensionNumber !== undefined ? { extensionNumber: b.extensionNumber.trim() } : {}),
+      ...(b.initialAudioId !== undefined ? { initialAudioId: b.initialAudioId } : {}),
+      ...(b.repetitions !== undefined ? { repetitions: b.repetitions } : {}),
+      ...(b.allowDirectDial !== undefined ? { allowDirectDial: b.allowDirectDial } : {}),
+      ...(b.scheduleEnabled !== undefined ? { scheduleEnabled: b.scheduleEnabled } : {}),
+      ...(b.schedule !== undefined ? { scheduleJson: JSON.stringify(b.schedule) } : {}),
+      ...(b.dtmfActions !== undefined ? { dtmfActionsJson: JSON.stringify(b.dtmfActions) } : {}),
+      ...(nextGraph !== undefined ? { graphJson: nextGraph, version: row.version + 1 } : {}),
+      ...(b.active !== undefined ? { active: b.active } : {}),
+      ...(aiResolved
+        ? { uraMode: aiResolved.uraMode, aiInstructions: aiResolved.aiInstructions || null }
+        : {}),
+      ...(b.uraMode !== undefined && !aiResolved ? { uraMode: b.uraMode } : {}),
+      ...(b.aiInstructions !== undefined && !aiResolved
+        ? { aiInstructions: b.aiInstructions }
+        : {}),
+      ...(b.elevenlabsAgentId !== undefined ? { elevenlabsAgentId: b.elevenlabsAgentId } : {}),
+      ...(b.portalAiAgentId !== undefined ? { portalAiAgentId: b.portalAiAgentId } : {}),
+      ...(b.useAiInstructions !== undefined ? { useAiInstructions: b.useAiInstructions } : {}),
+      ...(b.useJson !== undefined ? { useJson: b.useJson } : {}),
+      ...(b.jsonContent !== undefined ? { jsonContent: b.jsonContent } : {}),
+      ...(b.initialMessage !== undefined ? { initialMessage: b.initialMessage } : {}),
+      ...(b.useInitialMessage !== undefined ? { useInitialMessage: b.useInitialMessage } : {}),
+      ...(b.googleDocsUrl !== undefined ? { googleDocsUrl: b.googleDocsUrl } : {}),
+      ...(b.useGoogleDocs !== undefined ? { useGoogleDocs: b.useGoogleDocs } : {}),
+      updatedAt: new Date().toISOString(),
+    })
+    .where(eq(schema.uras.id, id));
+  const [next] = await db.select().from(schema.uras).where(eq(schema.uras.id, id));
+  if (b.applyToIssabel && next) {
+    const jobId = await enqueueApplyJob(db, {
+      organizationId: next.organizationId,
+      resourceType: 'ura',
+      resourceId: id,
+      bundle: buildUraAiBundle(next),
+    });
+    return c.json({ ...(await serializeUra(next)), applyJobId: jobId });
+  }
+  return c.json(await serializeUra(next!));
+});
+
+app.delete('/uras/:id', async (c) => {
+  const u = await getSessionUser(c);
+  if (!u) return c.json({ error: 'unauthorized' }, 401);
+  const id = Number(c.req.param('id'));
+  const [row] = await db.select().from(schema.uras).where(eq(schema.uras.id, id));
+  if (!row) return c.json({ error: 'not_found' }, 404);
+  if (!(await canWriteOrg(u, row.organizationId))) return c.json({ error: 'forbidden' }, 403);
+  await db.delete(schema.uras).where(eq(schema.uras.id, id));
   return c.json({ ok: true });
 });
 
@@ -3227,6 +3747,12 @@ app.get('/metrics/queue-log', async (c) => {
     return c.json({ error: 'queue_log_query_failed', items: [] }, 502);
   }
 });
+
+registerPbxAuditRoutes(app, { db, getSessionUser, canReadOrg, canWriteOrg });
+registerHospitalityRoutes(app, { db, getSessionUser, canReadOrg, canWriteOrg });
+registerIntegrationsExtRoutes(app, { db, getSessionUser, canReadOrg, canWriteOrg });
+registerIssabelPhase2Routes(app, { db, getSessionUser, canReadOrg, canWriteOrg });
+registerTelephonyExtRoutes(app, { db, getSessionUser, canReadOrg, canWriteOrg });
 
 app.get('/health', (c) => c.json({ ok: true }));
 

@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react';
 import { QueryClient } from '@tanstack/react-query';
 import { Outlet, createRootRouteWithContext, createRoute, createRouter, isRedirect, redirect } from '@tanstack/react-router';
 import { Toaster } from 'sonner';
@@ -9,6 +10,8 @@ import { IntegrationsHubPage } from '@/features/integrations/integrations-hub-pa
 import { CallFlowsPage } from '@/features/integrations/call-flows-page';
 import { WhatsappPage } from '@/features/integrations/whatsapp-page';
 import { AiAgentsPage } from '@/features/integrations/ai-agents-page';
+import { LensleadPage } from '@/features/integrations/lenslead-page';
+import { HospitalityRoomsPage } from '@/features/hospitality/hospitality-rooms-page';
 import { ForbiddenPage } from '@/features/misc/forbidden-page';
 import { CallsPage } from '@/features/calls/calls-page';
 import { CallsLayout } from '@/features/calls/calls-layout';
@@ -20,6 +23,7 @@ import { OrganizationDetailPage } from '@/features/organizations/organization-de
 import { PbxConsolePage } from '@/features/pbx/pbx-console-page';
 import { PbxFeaturesPage } from '@/features/pbx/pbx-features-page';
 import { PbxInboundNumbersPage } from '@/features/pbx/pbx-inbound-numbers-page';
+import { InboundNumberFormPage } from '@/features/inbound/inbound-number-form-page';
 import { PbxCallsPage } from '@/features/pbx/pbx-calls-page';
 import { PbxReportsConsolePage } from '@/features/pbx/pbx-reports-console-page';
 import { PbxSettingsConsolePage } from '@/features/pbx/pbx-settings-console-page';
@@ -43,11 +47,15 @@ import { PbxPeoplePage, ExtensionGroupsPage, TeamsPage } from '@/features/pbx/su
 import { CallRecordingsPage } from '@/features/pbx/sub/calls-sub-pages';
 // Termination sub-pages
 import { CallingPlanPage, TrunksPage } from '@/features/pbx/sub/termination-sub-pages';
+import { TrunkFormPage } from '@/features/pbx/trunk-form-page';
 // Features sub-pages
 import {
-  AudioFilesPage, QueuesPage, CallFlowsFeaturePage, HoldGroupPage,
-  InternalNumbersPage, ConferenceRoomsPage, UrasPage,
+  AudioFilesPage, QueuesPage, HoldGroupPage,
+  InternalNumbersPage, ConferenceRoomsPage,
 } from '@/features/pbx/sub/features-sub-pages';
+import { CallFlowsPbxPage } from '@/features/call-flow/call-flows-pbx-page';
+import { UrasListPage } from '@/features/ura/uras-list-page';
+import { UraFormPage } from '@/features/ura/ura-form-page';
 // Reports sub-pages
 import {
   ReportQueuesPage, ReportOperationsPage, ReportDetailPage,
@@ -60,6 +68,13 @@ import {
 import { apiFetch } from '@/shared/api/client';
 import { qk } from '@/shared/api/query-keys';
 import { canAccessDiagnostics } from '@/shared/lib/can';
+
+const UraFlowEditorPageLazy = lazy(() =>
+  import('@/features/ura/ura-flow-editor-page').then((m) => ({ default: m.UraFlowEditorPage })),
+);
+const CallFlowFlowEditorPageLazy = lazy(() =>
+  import('@/features/call-flow/call-flow-flow-editor-page').then((m) => ({ default: m.CallFlowFlowEditorPage })),
+);
 import type { Me } from '@/shared/types/me';
 import { AppShell } from '@/widgets/app-shell';
 import { PagePending } from '@/shared/ui/page-pending';
@@ -288,6 +303,12 @@ const integrationsAiRoute = createRoute({
   component: AiAgentsPage,
 });
 
+const integrationsLensleadRoute = createRoute({
+  getParentRoute: () => integrationsLayout,
+  path: 'lenslead',
+  component: LensleadPage,
+});
+
 const extensionsRoute = createRoute({
   getParentRoute: () => shellRoute,
   path: 'extensions',
@@ -346,19 +367,49 @@ const pbxCallRecordingsRoute = createRoute({ getParentRoute: () => pbxLayout, pa
 const pbxTerminationRoute = createRoute({ getParentRoute: () => pbxLayout, path: 'termination', component: PbxTerminationPage, pendingComponent: PagePending });
 const pbxCallingPlanRoute = createRoute({ getParentRoute: () => pbxLayout, path: 'termination/calling-plan', component: CallingPlanPage, pendingComponent: PagePending });
 const pbxTrunksRoute = createRoute({ getParentRoute: () => pbxLayout, path: 'termination/trunks', component: TrunksPage, pendingComponent: PagePending });
+const pbxTrunkNewRoute = createRoute({ getParentRoute: () => pbxLayout, path: 'termination/trunks/new', component: TrunkFormPage, pendingComponent: PagePending });
+const pbxTrunkEditRoute = createRoute({ getParentRoute: () => pbxLayout, path: 'termination/trunks/$trunkId', component: TrunkFormPage, pendingComponent: PagePending });
 
 // Inbound
 const pbxInboundNumbersRoute = createRoute({ getParentRoute: () => pbxLayout, path: 'inbound-numbers', component: PbxInboundNumbersPage, pendingComponent: PagePending });
+const pbxInboundNewRoute = createRoute({ getParentRoute: () => pbxLayout, path: 'inbound-numbers/new', component: InboundNumberFormPage, pendingComponent: PagePending });
+const pbxInboundEditRoute = createRoute({ getParentRoute: () => pbxLayout, path: 'inbound-numbers/$inboundId', component: InboundNumberFormPage, pendingComponent: PagePending });
 
 // Features
 const pbxFeaturesRoute = createRoute({ getParentRoute: () => pbxLayout, path: 'features', component: PbxFeaturesPage, pendingComponent: PagePending });
 const pbxFeatAudioRoute = createRoute({ getParentRoute: () => pbxLayout, path: 'features/audio', component: AudioFilesPage, pendingComponent: PagePending });
 const pbxFeatQueuesRoute = createRoute({ getParentRoute: () => pbxLayout, path: 'features/queues', component: QueuesPage, pendingComponent: PagePending });
-const pbxFeatCallFlowsRoute = createRoute({ getParentRoute: () => pbxLayout, path: 'features/call-flows', component: CallFlowsFeaturePage, pendingComponent: PagePending });
+const pbxFeatCallFlowsRoute = createRoute({ getParentRoute: () => pbxLayout, path: 'features/call-flows', component: CallFlowsPbxPage, pendingComponent: PagePending });
+const pbxCallFlowEditorRoute = createRoute({
+  getParentRoute: () => pbxLayout,
+  path: 'features/call-flows/$flowId/flow',
+  component: () => (
+    <Suspense fallback={<PagePending />}>
+      <CallFlowFlowEditorPageLazy />
+    </Suspense>
+  ),
+});
 const pbxFeatHoldRoute = createRoute({ getParentRoute: () => pbxLayout, path: 'features/hold-group', component: HoldGroupPage, pendingComponent: PagePending });
 const pbxFeatInternalRoute = createRoute({ getParentRoute: () => pbxLayout, path: 'features/internal-numbers', component: InternalNumbersPage, pendingComponent: PagePending });
 const pbxFeatConfRoute = createRoute({ getParentRoute: () => pbxLayout, path: 'features/conference-rooms', component: ConferenceRoomsPage, pendingComponent: PagePending });
-const pbxFeatUrasRoute = createRoute({ getParentRoute: () => pbxLayout, path: 'features/uras', component: UrasPage, pendingComponent: PagePending });
+const pbxFeatUrasRoute = createRoute({ getParentRoute: () => pbxLayout, path: 'features/uras', component: UrasListPage, pendingComponent: PagePending });
+const pbxHospitalityRoute = createRoute({
+  getParentRoute: () => pbxLayout,
+  path: 'hospitality/rooms',
+  component: HospitalityRoomsPage,
+  pendingComponent: PagePending,
+});
+const pbxUraNewRoute = createRoute({ getParentRoute: () => pbxLayout, path: 'features/uras/new', component: UraFormPage, pendingComponent: PagePending });
+const pbxUraEditRoute = createRoute({ getParentRoute: () => pbxLayout, path: 'features/uras/$uraId', component: UraFormPage, pendingComponent: PagePending });
+const pbxUraFlowRoute = createRoute({
+  getParentRoute: () => pbxLayout,
+  path: 'features/uras/$uraId/flow',
+  component: () => (
+    <Suspense fallback={<PagePending />}>
+      <UraFlowEditorPageLazy />
+    </Suspense>
+  ),
+});
 
 // Reports
 const pbxReportsRoute = createRoute({ getParentRoute: () => pbxLayout, path: 'reports', component: PbxReportsConsolePage, pendingComponent: PagePending });
@@ -398,7 +449,13 @@ const routeTree = rootRoute.addChildren([
     diagnosticsRoute,
     settingsRoute,
     profileRoute,
-    integrationsLayout.addChildren([integrationsIndexRoute, integrationsFlowsRoute, integrationsWhatsappRoute, integrationsAiRoute]),
+    integrationsLayout.addChildren([
+      integrationsIndexRoute,
+      integrationsFlowsRoute,
+      integrationsWhatsappRoute,
+      integrationsAiRoute,
+      integrationsLensleadRoute,
+    ]),
     extensionsRoute,
     extensionNewRoute,
     extensionDetailRoute,
@@ -421,18 +478,27 @@ const routeTree = rootRoute.addChildren([
       // Termination
       pbxTerminationRoute,
       pbxCallingPlanRoute,
+      pbxTrunkNewRoute,
+      pbxTrunkEditRoute,
       pbxTrunksRoute,
       // Inbound
       pbxInboundNumbersRoute,
+      pbxInboundNewRoute,
+      pbxInboundEditRoute,
       // Features
       pbxFeaturesRoute,
       pbxFeatAudioRoute,
       pbxFeatQueuesRoute,
       pbxFeatCallFlowsRoute,
+      pbxCallFlowEditorRoute,
       pbxFeatHoldRoute,
       pbxFeatInternalRoute,
       pbxFeatConfRoute,
       pbxFeatUrasRoute,
+      pbxHospitalityRoute,
+      pbxUraNewRoute,
+      pbxUraEditRoute,
+      pbxUraFlowRoute,
       // Reports
       pbxReportsRoute,
       pbxRepQueuesRoute,

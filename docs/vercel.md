@@ -38,6 +38,13 @@ Configure em **Settings → Environment Variables** (marque **Production** e **P
 | `ISSABEL_CDR_MYSQL_JSON` | CDR global (JSON) |
 | `ISSABEL_MYSQL_*` | Alternativa ao JSON de CDR |
 | `AUDIO_FILES_DIR` | Por defeito `/tmp` na Vercel (efémero entre invocações) |
+| `CRON_SECRET` | Protege `GET /api/cron/sync-lenslead` (header `Authorization: Bearer`) |
+| `PORTAL_SYNC_SECRET` | Mesmo valor na Edge Function LensLead `portal-sync` |
+| `LENSLEAD_FUNCTIONS_URL` | Base URL Supabase functions (ex. `https://xxx.supabase.co/functions/v1`) |
+| `AMI_HOST`, `AMI_PORT`, `AMI_USER`, `AMI_SECRET` | Métricas de filas (fase 2, opcional) |
+| `CREDENTIALS_ENCRYPTION_KEY` | Criptografia senhas SIP de hóspedes (hotelaria); min. 16 caracteres |
+
+Crons adicionais: `dispatch-webhooks` (5 min), `issabel-apply-jobs` (10 min). Ver `vercel.json`.
 
 ### Web (build-time)
 

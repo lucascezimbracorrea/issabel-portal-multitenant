@@ -13,5 +13,23 @@
     { "source": "/api", "destination": "/api" },
     { "source": "/api/:path*", "destination": "/api/:path*" },
     { "source": "/((?!api/).*)", "destination": "/index.html" }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron/sync-lenslead",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/hotel-auto-checkout",
+      "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/dispatch-webhooks",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/issabel-apply-jobs",
+      "schedule": "*/10 * * * *"
+    }
   ]
 }

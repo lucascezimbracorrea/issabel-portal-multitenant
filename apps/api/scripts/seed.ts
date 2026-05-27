@@ -110,12 +110,30 @@ async function main() {
     .insert(schema.callFlows)
     .values({
       organizationId: orgIds[0],
-      name: 'teste',
+      name: 'Fluxo Atendimento',
+      extensionNumber: '800',
       graphJson: JSON.stringify({ nodes: [], edges: [] }),
       version: 1,
+      active: true,
     })
     ) as unknown as [{ insertId: number }];
   const flowId = insFlow.insertId;
+
+  const [insQueue] = await db
+    .insert(schema.queues)
+    .values({
+      organizationId: orgIds[0],
+      name: 'Atendimento',
+      queueCode: '01',
+      strategy: 'roundrobin',
+      timeout: 30,
+    })
+    ) as unknown as [{ insertId: number }];
+  await db.insert(schema.queueMembers).values([
+    { queueId: insQueue.insertId, agentLabel: 'Maria Silva' },
+    { queueId: insQueue.insertId, agentLabel: 'Joao Santos' },
+    { queueId: insQueue.insertId, agentLabel: 'Ana Costa' },
+  ]);
 
   await db.insert(schema.callReactionRules).values([
     {
@@ -140,6 +158,59 @@ async function main() {
     key: 'billing',
     value: JSON.stringify({ pricePerClientUsd: 39 }),
   });
+
+  // Sample URA for org 1
+  if (orgIds[0]) {
+    const [insUra] = await db
+      .insert(schema.uras)
+      .values({
+        organizationId: orgIds[0],
+        name: 'Atendimento Principal',
+        extensionNumber: '2000',
+        repetitions: 2,
+        allowDirectDial: false,
+        scheduleEnabled: false,
+        scheduleJson: '{}',
+        dtmfActionsJson: JSON.stringify([
+          { digit: '1', action: 'queue', destinationId: null },
+          { digit: '2', action: 'extension', destinationId: null },
+          { digit: '0', action: 'hangup', destinationId: null },
+        ]),
+        graphJson: JSON.stringify({ nodes: [], edges: [] }),
+        version: 1,
+        active: true,
+      })
+    ) as unknown as [{ insertId: number }];
+    const uraId = insUra.insertId;
+
+    // Sample inbound number pointing to the URA
+    await db.insert(schema.inboundNumbers).values({
+      organizationId: orgIds[0],
+      number: '+551140000000',
+      routeType: 'ura',
+      destinationId: uraId,
+      maxConcurrentCalls: 10,
+      registerEnabled: true,
+      recordCalls: false,
+      scheduleJson: '{}',
+      active: true,
+      description: 'Número principal demo',
+    });
+
+    // An extra inbound number with no route
+    await db.insert(schema.inboundNumbers).values({
+      organizationId: orgIds[0],
+      number: '+551140000001',
+      routeType: 'none',
+      destinationId: null,
+      maxConcurrentCalls: 5,
+      registerEnabled: false,
+      recordCalls: false,
+      scheduleJson: '{}',
+      active: false,
+      description: 'Número secundário (inativo)',
+    });
+  }
 
   console.log('Seeded. Users: admin@demo.local / org@demo.local password: demo123');
   await pool.end();

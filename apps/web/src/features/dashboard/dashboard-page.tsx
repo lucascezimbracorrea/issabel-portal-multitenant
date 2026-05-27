@@ -57,6 +57,19 @@ export function DashboardPage() {
     enabled: me.role === 'platform_admin',
   });
 
+  const orgBilling = useQuery({
+    queryKey: ['org-billing', oid],
+    queryFn: () =>
+      apiFetch<{
+        extensionsCount: number;
+        estimatedMrrUsd: number;
+        billableMinutes30d: number;
+        cdrSource: string;
+        channelsLimit: number | null;
+      }>(`/organizations/${oid}/billing-summary`),
+    enabled: oid > 0,
+  });
+
   const fmtUsd = useMemo(
     () =>
       new Intl.NumberFormat(undefined, {
@@ -80,6 +93,35 @@ export function DashboardPage() {
         </h1>
         <p className="max-w-3xl text-sm leading-relaxed text-muted-foreground">{t('dashboard.subtitle')}</p>
       </div>
+
+      {me.role !== 'platform_admin' && orgBilling.data && (
+        <div className="grid gap-4 sm:grid-cols-3">
+          <Card className="border-0 border-l-4 border-l-violet-500 shadow-md ring-1 ring-border/50">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-xs font-semibold uppercase tracking-wide text-violet-800 dark:text-violet-300">
+                Ramais
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="text-3xl font-bold">{orgBilling.data.extensionsCount}</CardContent>
+          </Card>
+          <Card className="border-0 border-l-4 border-l-emerald-500 shadow-md ring-1 ring-border/50">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-xs font-semibold uppercase tracking-wide text-emerald-800 dark:text-emerald-300">
+                Minutos (30d)
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="text-3xl font-bold">{orgBilling.data.billableMinutes30d}</CardContent>
+          </Card>
+          <Card className="border-0 border-l-4 border-l-indigo-500 shadow-md ring-1 ring-border/50">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-xs font-semibold uppercase tracking-wide text-indigo-800 dark:text-indigo-300">
+                Estimativa MRR
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="text-3xl font-bold">{fmtUsd.format(orgBilling.data.estimatedMrrUsd)}</CardContent>
+          </Card>
+        </div>
+      )}
 
       {me.role === 'platform_admin' ? (
         <>

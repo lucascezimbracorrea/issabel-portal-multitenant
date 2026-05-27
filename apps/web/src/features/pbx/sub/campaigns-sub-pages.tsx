@@ -18,6 +18,7 @@ type Campaign = {
   type: 'outbound' | 'preview' | 'predictive';
   status: 'active' | 'paused' | 'completed' | 'draft';
   description: string | null;
+  externalDiscadorId?: string | null;
 };
 
 const TYPE_COLORS: Record<string, string> = {
@@ -47,6 +48,7 @@ export function CampaignListPage() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editName, setEditName] = useState('');
   const [editStatus, setEditStatus] = useState<Campaign['status']>('draft');
+  const [editDiscadorId, setEditDiscadorId] = useState('');
 
   const list = useQuery({
     queryKey: ['campaigns', orgId ?? 0],
@@ -68,9 +70,30 @@ export function CampaignListPage() {
     onError: () => toast.error(t('campaign.failed')),
   });
 
+  const syncDiscador = useMutation({
+    mutationFn: (id: number) => apiFetch<{ ok: boolean; discadorUrl?: string }>(`/campaigns/${id}/sync-discador`, { method: 'POST' }),
+    onSuccess: (r) => {
+      toast.success(r.discadorUrl ? `Discador: ${r.discadorUrl}` : 'Sync iniciado');
+    },
+    onError: () => toast.error(t('campaign.failed')),
+  });
+
   const update = useMutation({
-    mutationFn: ({ id, name, status }: { id: number; name: string; status: Campaign['status'] }) =>
-      apiFetch(`/campaigns/${id}`, { method: 'PATCH', body: JSON.stringify({ name, status }) }),
+    mutationFn: ({
+      id,
+      name,
+      status,
+      externalDiscadorId,
+    }: {
+      id: number;
+      name: string;
+      status: Campaign['status'];
+      externalDiscadorId: string | null;
+    }) =>
+      apiFetch(`/campaigns/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ name, status, externalDiscadorId }),
+      }),
     onSuccess: async () => {
       toast.success(t('campaign.updated'));
       setEditingId(null);
@@ -161,6 +184,12 @@ export function CampaignListPage() {
                     {editingId === camp.id ? (
                       <div className="flex flex-wrap items-center gap-2">
                         <Input className="h-8 w-48" value={editName} onChange={(e) => setEditName(e.target.value)} />
+                        <Input
+                          className="h-8 w-36 font-mono text-xs"
+                          value={editDiscadorId}
+                          onChange={(e) => setEditDiscadorId(e.target.value)}
+                          placeholder="ID discador"
+                        />
                         <div className="flex gap-1 flex-wrap">
                           {(['active', 'paused', 'draft', 'completed'] as const).map((s) => (
                             <button key={s} type="button" onClick={() => setEditStatus(s)}
@@ -170,7 +199,14 @@ export function CampaignListPage() {
                           ))}
                         </div>
                         <Button size="sm" className="h-7 px-2" disabled={update.isPending}
-                          onClick={() => update.mutate({ id: camp.id, name: editName, status: editStatus })}>
+                          onClick={() =>
+                            update.mutate({
+                              id: camp.id,
+                              name: editName,
+                              status: editStatus,
+                              externalDiscadorId: editDiscadorId.trim() || null,
+                            })
+                          }>
                           <Check className="h-3 w-3" />
                         </Button>
                         <Button size="sm" variant="outline" className="h-7 px-2" onClick={() => setEditingId(null)}>
@@ -193,8 +229,26 @@ export function CampaignListPage() {
                   </div>
                   {canWrite && editingId !== camp.id && (
                     <div className="flex gap-1 shrink-0">
-                      <button type="button" onClick={() => { setEditingId(camp.id); setEditName(camp.name); setEditStatus(camp.status); }}
-                        className="text-muted-foreground hover:text-foreground transition-colors">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-7 px-2 text-xs"
+                        disabled={syncDiscador.isPending}
+                        onClick={() => syncDiscador.mutate(camp.id)}
+                      >
+                        Issabel
+                      </Button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingId(camp.id);
+                          setEditName(camp.name);
+                          setEditStatus(camp.status);
+                          setEditDiscadorId(camp.externalDiscadorId ?? '');
+                        }}
+                        className="text-muted-foreground hover:text-foreground transition-colors"
+                      >
                         <Pencil className="h-4 w-4" />
                       </button>
                       <button type="button"
@@ -206,8 +260,13 @@ export function CampaignListPage() {
                   )}
                 </div>
               </CardHeader>
-              {camp.description && (
-                <CardContent className="pt-0 text-xs text-muted-foreground">{camp.description}</CardContent>
+              {(camp.description || camp.externalDiscadorId) && (
+                <CardContent className="pt-0 space-y-1 text-xs text-muted-foreground">
+                  {camp.description && <p>{camp.description}</p>}
+                  {camp.externalDiscadorId && (
+                    <p className="font-mono">Discador: {camp.externalDiscadorId}</p>
+                  )}
+                </CardContent>
               )}
             </Card>
           ))}

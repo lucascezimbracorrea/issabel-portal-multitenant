@@ -13,6 +13,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/card';
 import { Input } from '@/shared/ui/input';
 import { Skeleton } from '@/shared/ui/skeleton';
 import { PbxScreenHero } from '@/features/pbx/pbx-screen-hero';
+import { TelephonySourceBanner } from '@/shared/components/telephony-source-banner';
+import { CrmScreenPop } from '@/shared/components/crm-screen-pop';
 
 export function PbxCallsPage() {
   const { t } = useTranslation();
@@ -20,6 +22,7 @@ export function PbxCallsPage() {
   const orgId = useActiveOrganizationId(me);
   const oid = orgId ?? me.organizationIds[0] ?? 0;
   const [q, setQ] = useState('');
+  const [agentExt, setAgentExt] = useState(() => localStorage.getItem('portalAgentExt') ?? '');
 
   const tel = useQuery({
     queryKey: qk.telephonyOverview(oid),
@@ -50,6 +53,8 @@ export function PbxCallsPage() {
           <Link to="/calls">{t('pbxScreen.isabelCallsPortalLink')}</Link>
         </Button>
       </PbxScreenHero>
+
+      {tel.data && <TelephonySourceBanner source={tel.data.source} />}
 
       {tel.isPending ? (
         <Skeleton className="h-64 w-full rounded-xl" />
@@ -96,9 +101,20 @@ export function PbxCallsPage() {
             <PhoneCall className="h-5 w-5 text-teal-600" />
             <CardTitle className="text-base">{t('pbxScreen.isabelCallsTable')}</CardTitle>
           </div>
-          <div className="relative max-w-xs">
-            <Filter className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input className="pl-9" placeholder={t('calls.filter')} value={q} onChange={(e) => setQ(e.target.value)} />
+          <div className="flex flex-wrap items-center gap-2">
+            <Input
+              className="w-24 font-mono text-xs"
+              placeholder="Seu ramal"
+              value={agentExt}
+              onChange={(e) => {
+                setAgentExt(e.target.value);
+                localStorage.setItem('portalAgentExt', e.target.value);
+              }}
+            />
+            <div className="relative max-w-xs">
+              <Filter className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input className="pl-9" placeholder={t('calls.filter')} value={q} onChange={(e) => setQ(e.target.value)} />
+            </div>
           </div>
         </CardHeader>
         <CardContent className="p-0">
@@ -130,7 +146,12 @@ export function PbxCallsPage() {
                     <td className="p-3 font-mono text-xs">{r.from}</td>
                     <td className="p-3 font-mono text-xs">{r.to}</td>
                     <td className="p-3">{r.durationSec}s</td>
-                    <td className="p-3 capitalize text-muted-foreground">{r.disposition}</td>
+                    <td className="p-3 capitalize text-muted-foreground">
+                      <div>{r.disposition}</div>
+                      {orgId && r.direction === 'inbound' && (
+                        <CrmScreenPop orgId={orgId} phone={r.from} fromExtension={agentExt || undefined} />
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

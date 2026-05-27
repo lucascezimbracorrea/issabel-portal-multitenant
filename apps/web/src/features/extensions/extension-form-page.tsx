@@ -12,6 +12,7 @@ import { Button } from '@/shared/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/card';
 import { Input } from '@/shared/ui/input';
 import { Skeleton } from '@/shared/ui/skeleton';
+import { SoftphoneProvisionPanel } from '@/features/softphone/softphone-provision-panel';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -743,6 +744,10 @@ export function ExtensionFormPage() {
           </div>
         </CardContent>
       </Card>
+
+      {isEdit && orgId && extId != null && (
+        <SoftphoneProvisionPanel orgId={orgId} extensionId={extId} />
+      )}
 
       <div className="fixed inset-x-0 bottom-0 z-10 border-t border-border bg-background/95 backdrop-blur-sm">
         <div className="mx-auto flex max-w-screen-xl items-center justify-end gap-3 px-6 py-3">
