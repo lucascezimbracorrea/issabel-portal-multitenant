@@ -483,7 +483,8 @@ app.get('/organizations', async (c) => {
     if (!logoUrl) {
       logoUrl = `https://ui-avatars.com/api/?size=128&background=0f766e&color=fff&name=${encodeURIComponent(o.tradeName ?? o.name)}`;
     }
-    const { appearance: _appearance, ...rest } = o;
+    const { appearance, ...rest } = o;
+    void appearance;
     const extUsed = extByOrg.get(o.id) ?? 0;
     return {
       ...rest,

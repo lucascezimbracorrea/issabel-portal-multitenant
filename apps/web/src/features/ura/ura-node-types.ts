@@ -8,6 +8,7 @@ export type UraNodeType =
   | 'extension'
   | 'queue'
   | 'ura'
+  | 'aiAgent'
   | 'hangup'
   | 'schedule';
 
@@ -21,6 +22,9 @@ export type UraNodeData = {
   queueName?: string | null;
   uraId?: number | null;
   uraName?: string | null;
+  aiAgentId?: number | null;
+  aiAgentName?: string | null;
+  voiceAgentId?: string | null;
   digit?: string | null;
   scheduleEnabled?: boolean;
   description?: string | null;
@@ -71,6 +75,12 @@ export const NODE_TYPE_META: Record<UraNodeType, { label: string; color: string;
     bgColor: 'bg-rose-50 dark:bg-rose-950/40',
     borderColor: 'border-rose-400 dark:border-rose-600',
   },
+  aiAgent: {
+    label: 'Agente IA',
+    color: 'text-fuchsia-700 dark:text-fuchsia-300',
+    bgColor: 'bg-fuchsia-50 dark:bg-fuchsia-950/40',
+    borderColor: 'border-fuchsia-400 dark:border-fuchsia-600',
+  },
   hangup: {
     label: 'Desligar',
     color: 'text-red-700 dark:text-red-300',
@@ -91,6 +101,7 @@ export const PALETTE_NODES: UraNodeType[] = [
   'extension',
   'queue',
   'ura',
+  'aiAgent',
   'hangup',
   'schedule',
 ];

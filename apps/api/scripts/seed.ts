@@ -64,8 +64,7 @@ async function main() {
         channelsLimit: i === 1 ? 10 : 20,
         diskQuotaGb: 1 + i * 0.5,
         cdrMysql: null,
-      })
-      ) as unknown as [{ insertId: number }];
+      }) as unknown as [{ insertId: number }];
     const orgId = insOrg.insertId;
     orgIds.push(orgId);
     await db.insert(schema.spaces).values([
@@ -115,8 +114,7 @@ async function main() {
       graphJson: JSON.stringify({ nodes: [], edges: [] }),
       version: 1,
       active: true,
-    })
-    ) as unknown as [{ insertId: number }];
+    }) as unknown as [{ insertId: number }];
   const flowId = insFlow.insertId;
 
   const [insQueue] = await db
@@ -127,8 +125,7 @@ async function main() {
       queueCode: '01',
       strategy: 'roundrobin',
       timeout: 30,
-    })
-    ) as unknown as [{ insertId: number }];
+    }) as unknown as [{ insertId: number }];
   await db.insert(schema.queueMembers).values([
     { queueId: insQueue.insertId, agentLabel: 'Maria Silva' },
     { queueId: insQueue.insertId, agentLabel: 'Joao Santos' },
@@ -179,8 +176,7 @@ async function main() {
         graphJson: JSON.stringify({ nodes: [], edges: [] }),
         version: 1,
         active: true,
-      })
-    ) as unknown as [{ insertId: number }];
+      }) as unknown as [{ insertId: number }];
     const uraId = insUra.insertId;
 
     // Sample inbound number pointing to the URA

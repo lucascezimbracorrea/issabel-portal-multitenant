@@ -1,6 +1,6 @@
 import { Handle, Position } from '@xyflow/react';
 import type { NodeProps } from '@xyflow/react';
-import { Mic, PhoneOff, Hash, Phone, List, Calendar, Play as PlayIcon } from 'lucide-react';
+import { Mic, PhoneOff, Hash, Phone, List, Calendar, Play as PlayIcon, Sparkles } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
 import type { UraNode, UraNodeType } from '../ura-node-types';
 import { NODE_TYPE_META } from '../ura-node-types';
@@ -17,6 +17,7 @@ const NODE_ICONS: Record<UraNodeType, React.FC<{ className?: string }>> = {
   extension: ({ className }) => <Phone className={className} />,
   queue: ({ className }) => <List className={className} />,
   ura: ({ className }) => <Mic className={className} />,
+  aiAgent: ({ className }) => <Sparkles className={className} />,
   hangup: ({ className }) => <PhoneOff className={className} />,
   schedule: ({ className }) => <Calendar className={className} />,
 };
@@ -52,6 +53,9 @@ export function UraBaseNode({ data, selected }: NodeProps<UraNode>) {
           <p className={cn('text-xs font-semibold leading-tight truncate', meta.color)}>{data.label}</p>
           {data.digit && (
             <p className="text-[10px] text-muted-foreground">Dígito: {data.digit}</p>
+          )}
+          {data.aiAgentName && (
+            <p className="text-[10px] text-muted-foreground truncate">{data.aiAgentName}</p>
           )}
           {data.description && (
             <p className="text-[10px] text-muted-foreground truncate">{data.description}</p>

@@ -123,7 +123,7 @@ export async function syncExtensionViaIssabelPbxApi(params: {
       };
       if (sipSecret.trim()) body.secret = sipSecret;
 
-      let res = await fetch(`${base}/extensions`, { method: 'POST', headers, body: JSON.stringify(body) });
+      const res = await fetch(`${base}/extensions`, { method: 'POST', headers, body: JSON.stringify(body) });
       if (res.status === 409) {
         const tryPut = await fetch(`${base}/extensions/${encodeURIComponent(extensionNumber)}`, {
           method: 'PUT',

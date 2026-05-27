@@ -84,6 +84,7 @@ export function UraFlowCanvas({ initialGraph, onGraphChange }: Props) {
             extension: '#14b8a6',
             queue: '#f59e0b',
             ura: '#f43f5e',
+            aiAgent: '#d946ef',
             hangup: '#ef4444',
             schedule: '#0ea5e9',
           };

@@ -30,14 +30,6 @@ export function PbxPeoplePage() {
     enabled: !!orgId,
   });
 
-  if (!orgId) return <p className="text-sm text-muted-foreground">{t('extensions.pickOrg')}</p>;
-
-  const filtered = (list.data?.items ?? []).filter((e) => {
-    const s = q.trim().toLowerCase();
-    if (!s) return true;
-    return e.displayName.toLowerCase().includes(s) || e.number.includes(s);
-  });
-
   const importExt = useMutation({
     mutationFn: (rows: { number: string; displayName: string }[]) =>
       Promise.all(
@@ -53,6 +45,14 @@ export function PbxPeoplePage() {
       await list.refetch();
     },
     onError: () => toast.error(t('extensions.failed')),
+  });
+
+  if (!orgId) return <p className="text-sm text-muted-foreground">{t('extensions.pickOrg')}</p>;
+
+  const filtered = (list.data?.items ?? []).filter((e) => {
+    const s = q.trim().toLowerCase();
+    if (!s) return true;
+    return e.displayName.toLowerCase().includes(s) || e.number.includes(s);
   });
 
   async function handleImport(file: File) {
@@ -162,7 +162,12 @@ function GroupForm({
   const [selected, setSelected] = useState<Set<number>>(new Set(initial?.extensionIds ?? []));
 
   const toggle = (id: number) =>
-    setSelected((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+    setSelected((prev) => {
+      const n = new Set(prev);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
 
   return (
     <div className="space-y-4 rounded-xl border border-border bg-muted/30 p-4">

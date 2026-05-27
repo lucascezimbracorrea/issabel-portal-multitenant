@@ -1,5 +1,3 @@
-import { parseIssabelPbxApiJson } from './issabel-pbx-api.js';
-
 export type IssabelIaAgent = {
   id: number;
   name: string;

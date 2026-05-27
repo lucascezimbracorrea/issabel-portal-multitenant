@@ -16,6 +16,7 @@ import { Skeleton } from '@/shared/ui/skeleton';
 import { Link } from '@tanstack/react-router';
 import { BusinessScheduleEditor } from '@/features/routing/business-schedule-editor';
 import { DestinationPicker } from '@/features/routing/destination-picker';
+import { UraVoiceTestPanel } from './ura-voice-test-panel';
 
 type UraDetail = {
   id: number;
@@ -511,6 +512,15 @@ export function UraFormPage() {
               onChange={(v) => patch('useJson', v)}
               label={t('routing.ura.useJson')}
             />
+            {form.uraMode === 'ai' && orgId && (
+              <UraVoiceTestPanel
+                orgId={orgId}
+                extensionNumber={form.extensionNumber}
+                initialMessage={form.initialMessage}
+                aiInstructions={form.aiInstructions}
+                useInitialMessage={form.useInitialMessage}
+              />
+            )}
           </CardContent>
         </Card>
       )}
